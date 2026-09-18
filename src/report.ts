@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Anchor, Hunk } from "./diff.js";
-import type { Judgement } from "./judge.js";
+import type { HunkAnswers, Judgement } from "./judge.js";
 import type { Findings, PrWarning } from "./policy.js";
 import type { Verdict, Written } from "./writer.js";
 
@@ -9,6 +9,9 @@ const JSON_OPEN = "<!-- git-judge:json";
 const MAX_FLAGGED_LISTED = 15;
 const MAX_UNFLAGGED_LISTED = 5;
 const MAX_FILES_LISTED = 10;
+const MAX_TABLE_ROWS = 60;
+// GitHub rejects a comment over 65,536 characters. Past this size the raw answers leave the JSON block.
+const MAX_COMMENT_CHARS = 60_000;
 // A statement about the PR rather than about a line, so it is reported once with its files
 // and not per hunk. One PR raised it on 18 hunks with the same sentence.
 const PR_LEVEL_FLAG = "unrelated_to_description";
@@ -25,7 +28,7 @@ export interface ReportInput {
   hunks: Hunk[];
   findings: Findings;
   written: Written;
-  judgement: Pick<Judgement, "model" | "inputTokens">;
+  judgement: Pick<Judgement, "model" | "inputTokens" | "hunks" | "pr">;
   durationMs: number;
   /** For example https://github.com/owner/repo/pull/12. With it, every location links to its line in the diff. */
   prUrl?: string | undefined;
@@ -47,6 +50,8 @@ export interface ReportJson {
   tldr: string | null;
   verdicts: (Verdict & Location)[];
   readingOrder: ({ hunkId: string; attention: number } & Location)[];
+  /** Every raw Jev answer, per judged hunk and for the PR. Dropped only if the comment would be too large. */
+  jev: { hunks: Record<string, JevRow>; pr: { descriptionQuality: number; testsCoverChange: number } } | null;
   prWarnings: PrWarning[];
   skipped: Findings["skipped"];
   lowCoverage: string[];
@@ -54,6 +59,17 @@ export interface ReportJson {
   models: string[];
   costUsd: number | null;
   durationMs: number;
+}
+
+type Chosen = { choice: string; confidence: number };
+
+/** One judged hunk: the probability of yes per noul, and the pick with its confidence per choice. */
+export interface JevRow extends Location {
+  nouls: Record<string, number>;
+  changeType: Chosen;
+  sensitiveArea: Chosen;
+  blastRadius: Chosen;
+  lowCoverage: boolean;
 }
 
 interface Location {
@@ -128,6 +144,18 @@ export function buildReport(input: ReportInput): Report {
       ...entry,
       ...locationOf(hunkOf(entry.hunkId)),
     })),
+    jev: {
+      hunks: Object.fromEntries(
+        input.hunks.flatMap((hunk) => {
+          const answers = input.judgement.hunks[hunk.id];
+          return answers ? [[hunk.id, jevRow(hunk, answers)]] : [];
+        }),
+      ),
+      pr: {
+        descriptionQuality: input.judgement.pr.description_quality.score,
+        testsCoverChange: input.judgement.pr.tests_cover_change.noul,
+      },
+    },
     prWarnings: findings.prWarnings,
     skipped: findings.skipped,
     lowCoverage: findings.lowCoverage,
@@ -139,7 +167,7 @@ export function buildReport(input: ReportInput): Report {
 
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   return {
-    summary: renderSummary(json, input.hunks.length, input.prUrl),
+    summary: renderWithinLimit(json, input),
     labels: findings.labels,
     check: {
       conclusion: findings.conclusion,
@@ -153,6 +181,94 @@ export function buildReport(input: ReportInput): Report {
     },
     json,
   };
+}
+
+function renderWithinLimit(json: ReportJson, input: ReportInput): string {
+  const flagged = new Set(input.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
+  const full = renderSummary(json, input.hunks.length, input.prUrl, flagged);
+  if (full.length <= MAX_COMMENT_CHARS) return full;
+  // The table keeps its row cap, so what grows without bound is the JSON. The raw answers go first.
+  return renderSummary({ ...json, jev: null }, input.hunks.length, input.prUrl, flagged, json.jev);
+}
+
+function jevRow(hunk: Hunk, answers: HunkAnswers): JevRow {
+  const { code, mismatch, custom } = answers;
+  const chosen = (answer: Chosen): Chosen => ({ choice: answer.choice, confidence: answer.confidence });
+  const nouls: Record<string, number> = {};
+  for (const [id, answer] of Object.entries(code)) if (answer.type === "noul") nouls[id] = answer.noul;
+  if (mismatch) nouls.unrelated_to_description = mismatch.unrelated_to_description.noul;
+  for (const [id, value] of Object.entries(custom)) nouls[`custom:${id}`] = value;
+  return {
+    ...locationOf(hunk),
+    nouls,
+    changeType: chosen(code.change_type),
+    sensitiveArea: chosen(code.sensitive_area),
+    blastRadius: chosen(code.blast_radius),
+    lowCoverage: answers.lowCoverage,
+  };
+}
+
+const NOUL_COLUMNS: [id: string, heading: string][] = [
+  ["mechanical", "mech"],
+  ["secret_semantic", "secret"],
+  ["destructive_data", "destr"],
+  ["refactor_changes_behaviour", "behav"],
+  ["test_loosened", "t.loos"],
+  ["safety_check_weakened", "safety"],
+  ["comment_drift", "drift"],
+  ["unrelated_to_description", "undesc"],
+];
+
+/** Every answer Jev gave, one row per judged hunk, most important first. Bold marks a value that raised a flag. */
+function renderJevTable(
+  json: ReportJson,
+  jev: NonNullable<ReportJson["jev"]>,
+  prUrl: string | undefined,
+  flagged: Set<string>,
+): string[] {
+  const ids = json.readingOrder.map((entry) => entry.hunkId).filter((id) => jev.hunks[id]);
+  for (const id of Object.keys(jev.hunks)) if (!ids.includes(id)) ids.push(id);
+  if (ids.length === 0) return [];
+
+  const attention = new Map(json.readingOrder.map((entry) => [entry.hunkId, entry.attention]));
+  const custom = [...new Set(ids.flatMap((id) => Object.keys(jev.hunks[id]?.nouls ?? {})))].filter((id) =>
+    id.startsWith("custom:"),
+  );
+  const columns: [string, string][] = [...NOUL_COLUMNS, ...custom.map((id): [string, string] => [id, id.slice(7)])];
+  const pick = (chosen: Chosen) => `${chosen.choice} ${chosen.confidence.toFixed(2)}`;
+
+  const rows = ids.slice(0, MAX_TABLE_ROWS).flatMap((id) => {
+    const row = jev.hunks[id];
+    if (!row) return [];
+    const cells = columns.map(([column]) => {
+      const value = row.nouls[column];
+      if (value === undefined) return "-";
+      return flagged.has(`${id}|${column}`) ? `**${value.toFixed(2)}**` : value.toFixed(2);
+    });
+    const score = attention.get(id);
+    return [
+      `| ${where(row, prUrl)}${row.lowCoverage ? " (cut)" : ""} | ${score === undefined ? "skip" : score.toFixed(2)} | ${cells.join(" | ")} | ${pick(row.changeType)} | ${pick(row.sensitiveArea)} | ${pick(row.blastRadius)} |`,
+    ];
+  });
+
+  const more = ids.length - rows.length;
+  return [
+    "<details>",
+    `<summary>Jev answers for ${plural(ids.length, "hunk")}</summary>`,
+    "",
+    "Probability of yes per question, and Jev's pick with its confidence for type, area, and blast radius.",
+    "`attn` is the attention score, `skip` means below the cutoff. Bold raised a flag. `undesc` is `-` when the description was too short to compare.",
+    "",
+    `| hunk | attn | ${columns.map(([, heading]) => heading).join(" | ")} | type | area | blast |`,
+    `|---|---|${columns.map(() => "---").join("|")}|---|---|---|`,
+    ...rows,
+    "",
+    ...(more > 0 ? [`And ${plural(more, "more hunk")}, in the JSON block of this comment.`, ""] : []),
+    `PR level: description quality ${jev.pr.descriptionQuality.toFixed(2)} of 2, tests cover the change ${jev.pr.testsCoverChange.toFixed(2)}.`,
+    "",
+    "</details>",
+    "",
+  ];
 }
 
 function locationOf(hunk: Hunk): Location {
@@ -181,7 +297,13 @@ function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): 
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
 
-function renderSummary(json: ReportJson, hunkCount: number, prUrl: string | undefined): string {
+function renderSummary(
+  json: ReportJson,
+  hunkCount: number,
+  prUrl: string | undefined,
+  flagged: Set<string>,
+  tableData: ReportJson["jev"] = json.jev,
+): string {
   const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
 
@@ -265,6 +387,8 @@ function renderSummary(json: ReportJson, hunkCount: number, prUrl: string | unde
     notes.push(`Too large to judge in full, only the first part was read: ${files.join(", ")}.`);
   }
   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
+
+  if (tableData) out.push(...renderJevTable(json, tableData, prUrl, flagged));
 
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
   out.push("---", `<sub>${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);

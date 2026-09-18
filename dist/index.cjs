@@ -95575,6 +95575,8 @@ var JSON_OPEN = "<!-- git-judge:json";
 var MAX_FLAGGED_LISTED = 15;
 var MAX_UNFLAGGED_LISTED = 5;
 var MAX_FILES_LISTED = 10;
+var MAX_TABLE_ROWS = 60;
+var MAX_COMMENT_CHARS = 6e4;
 var PR_LEVEL_FLAG = "unrelated_to_description";
 var PRICES = {
   jev: [0.042, 0],
@@ -95639,6 +95641,18 @@ function buildReport(input2) {
       ...entry,
       ...locationOf(hunkOf(entry.hunkId))
     })),
+    jev: {
+      hunks: Object.fromEntries(
+        input2.hunks.flatMap((hunk) => {
+          const answers = input2.judgement.hunks[hunk.id];
+          return answers ? [[hunk.id, jevRow(hunk, answers)]] : [];
+        })
+      ),
+      pr: {
+        descriptionQuality: input2.judgement.pr.description_quality.score,
+        testsCoverChange: input2.judgement.pr.tests_cover_change.noul
+      }
+    },
     prWarnings: findings.prWarnings,
     skipped: findings.skipped,
     lowCoverage: findings.lowCoverage,
@@ -95649,7 +95663,7 @@ function buildReport(input2) {
   };
   const gates = json2.verdicts.filter((verdict) => verdict.kind === "gate");
   return {
-    summary: renderSummary(json2, input2.hunks.length, input2.prUrl),
+    summary: renderWithinLimit(json2, input2),
     labels: findings.labels,
     check: {
       conclusion: findings.conclusion,
@@ -95658,6 +95672,80 @@ function buildReport(input2) {
     },
     json: json2
   };
+}
+function renderWithinLimit(json2, input2) {
+  const flagged = new Set(input2.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
+  const full = renderSummary(json2, input2.hunks.length, input2.prUrl, flagged);
+  if (full.length <= MAX_COMMENT_CHARS) return full;
+  return renderSummary({ ...json2, jev: null }, input2.hunks.length, input2.prUrl, flagged, json2.jev);
+}
+function jevRow(hunk, answers) {
+  const { code, mismatch, custom: custom2 } = answers;
+  const chosen = (answer) => ({ choice: answer.choice, confidence: answer.confidence });
+  const nouls = {};
+  for (const [id, answer] of Object.entries(code)) if (answer.type === "noul") nouls[id] = answer.noul;
+  if (mismatch) nouls.unrelated_to_description = mismatch.unrelated_to_description.noul;
+  for (const [id, value] of Object.entries(custom2)) nouls[`custom:${id}`] = value;
+  return {
+    ...locationOf(hunk),
+    nouls,
+    changeType: chosen(code.change_type),
+    sensitiveArea: chosen(code.sensitive_area),
+    blastRadius: chosen(code.blast_radius),
+    lowCoverage: answers.lowCoverage
+  };
+}
+var NOUL_COLUMNS = [
+  ["mechanical", "mech"],
+  ["secret_semantic", "secret"],
+  ["destructive_data", "destr"],
+  ["refactor_changes_behaviour", "behav"],
+  ["test_loosened", "t.loos"],
+  ["safety_check_weakened", "safety"],
+  ["comment_drift", "drift"],
+  ["unrelated_to_description", "undesc"]
+];
+function renderJevTable(json2, jev, prUrl, flagged) {
+  const ids = json2.readingOrder.map((entry) => entry.hunkId).filter((id) => jev.hunks[id]);
+  for (const id of Object.keys(jev.hunks)) if (!ids.includes(id)) ids.push(id);
+  if (ids.length === 0) return [];
+  const attention2 = new Map(json2.readingOrder.map((entry) => [entry.hunkId, entry.attention]));
+  const custom2 = [...new Set(ids.flatMap((id) => Object.keys(jev.hunks[id]?.nouls ?? {})))].filter(
+    (id) => id.startsWith("custom:")
+  );
+  const columns = [...NOUL_COLUMNS, ...custom2.map((id) => [id, id.slice(7)])];
+  const pick2 = (chosen) => `${chosen.choice} ${chosen.confidence.toFixed(2)}`;
+  const rows = ids.slice(0, MAX_TABLE_ROWS).flatMap((id) => {
+    const row = jev.hunks[id];
+    if (!row) return [];
+    const cells = columns.map(([column]) => {
+      const value = row.nouls[column];
+      if (value === void 0) return "-";
+      return flagged.has(`${id}|${column}`) ? `**${value.toFixed(2)}**` : value.toFixed(2);
+    });
+    const score = attention2.get(id);
+    return [
+      `| ${where(row, prUrl)}${row.lowCoverage ? " (cut)" : ""} | ${score === void 0 ? "skip" : score.toFixed(2)} | ${cells.join(" | ")} | ${pick2(row.changeType)} | ${pick2(row.sensitiveArea)} | ${pick2(row.blastRadius)} |`
+    ];
+  });
+  const more = ids.length - rows.length;
+  return [
+    "<details>",
+    `<summary>Jev answers for ${plural2(ids.length, "hunk")}</summary>`,
+    "",
+    "Probability of yes per question, and Jev's pick with its confidence for type, area, and blast radius.",
+    "`attn` is the attention score, `skip` means below the cutoff. Bold raised a flag. `undesc` is `-` when the description was too short to compare.",
+    "",
+    `| hunk | attn | ${columns.map(([, heading]) => heading).join(" | ")} | type | area | blast |`,
+    `|---|---|${columns.map(() => "---").join("|")}|---|---|---|`,
+    ...rows,
+    "",
+    ...more > 0 ? [`And ${plural2(more, "more hunk")}, in the JSON block of this comment.`, ""] : [],
+    `PR level: description quality ${jev.pr.descriptionQuality.toFixed(2)} of 2, tests cover the change ${jev.pr.testsCoverChange.toFixed(2)}.`,
+    "",
+    "</details>",
+    ""
+  ];
 }
 function locationOf(hunk) {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
@@ -95677,7 +95765,7 @@ function orderForReading(order, verdicts) {
   };
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
-function renderSummary(json2, hunkCount, prUrl) {
+function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) {
   const out = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json2.tldr ? `**TL;DR** ${json2.tldr}` : "Nothing flagged.", "");
   const finding = (verdict, note) => [
@@ -95751,6 +95839,7 @@ function renderSummary(json2, hunkCount, prUrl) {
     notes.push(`Too large to judge in full, only the first part was read: ${files.join(", ")}.`);
   }
   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
+  if (tableData) out.push(...renderJevTable(json2, tableData, prUrl, flagged));
   const cost = json2.costUsd === null ? "cost unknown" : `about $${json2.costUsd.toFixed(4)}`;
   out.push("---", `<sub>${plural2(hunkCount, "hunk")} | ${(json2.durationMs / 1e3).toFixed(1)} s | ${cost} | ${json2.models.join(", ")}</sub>`);
   out.push("", JSON_OPEN, JSON.stringify(json2).replaceAll("-->", "--\\u003e"), "-->");
