@@ -94,6 +94,8 @@ test("a mixed PR: the auth change and the loosened test are read first, the rest
   expect(tldrPrompts.at(-1)).toContain("- test/invoice.test.ts: test");
   expect(tldrPrompts.at(-1)).not.toContain("vendor/lib/index.js");
   expect(report.json.durationMs).toBe(3500);
+  expect(report.summary).toContain("<summary>Jev answers for 7 hunks</summary>");
+  expect(report.summary).toMatch(/\| `src\/auth\/session\.ts` L1-13 \| \d\.\d\d \| 0\.05 \| .*\*\*0\.92\*\* .*\| refactor 0\.90 \| auth 0\.90 \|/);
   expect(seenFiles.has("vendor/lib/index.js")).toBe(false);
   expect(seenFiles.has("assets/logo.png")).toBe(false);
 });

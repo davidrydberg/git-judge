@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Hunk } from "../src/diff.js";
+import type { HunkAnswers, Judgement } from "../src/judge.js";
 import type { Findings } from "../src/policy.js";
 import {
   buildDidNotRunReport,
@@ -75,9 +76,36 @@ function input(found: Findings, written: Partial<Written> = {}): ReportInput {
       usage: { "gpt-5.6-luna": { requests: 3, inputTokens: 3000, outputTokens: 400 } },
       ...written,
     },
-    judgement: { model: "jev-1.13.0", inputTokens: 60_000 },
+    judgement: { model: "jev-1.13.0", inputTokens: 60_000, hunks: {}, pr: PR_ANSWERS },
     durationMs: 3240,
   };
+}
+
+const PR_ANSWERS = {
+  description_quality: { type: "score", score: 1.62 },
+  tests_cover_change: { type: "noul", noul: 0.81 },
+} as unknown as Judgement["pr"];
+
+function jevAnswers(nouls: Record<string, number>, options: { unrelated?: number | null; custom?: Record<string, number>; lowCoverage?: boolean } = {}): HunkAnswers {
+  const noul = (id: string) => ({ type: "noul", noul: nouls[id] ?? 0.05 });
+  const pick = (choice: string, confidence: number) => ({ type: "choice", choice, confidence, probabilities: {} });
+  return {
+    code: {
+      secret_semantic: noul("secret_semantic"),
+      destructive_data: noul("destructive_data"),
+      mechanical: noul("mechanical"),
+      refactor_changes_behaviour: noul("refactor_changes_behaviour"),
+      test_loosened: noul("test_loosened"),
+      safety_check_weakened: noul("safety_check_weakened"),
+      comment_drift: noul("comment_drift"),
+      change_type: pick("refactor", 0.91),
+      sensitive_area: pick("auth", 0.77),
+      blast_radius: pick("end users", 0.64),
+    },
+    custom: options.custom ?? {},
+    mismatch: options.unrelated === null ? null : { unrelated_to_description: { type: "noul", noul: options.unrelated ?? 0.1 } },
+    lowCoverage: options.lowCoverage ?? false,
+  } as unknown as HunkAnswers;
 }
 
 const CLEAN = input(
@@ -255,6 +283,80 @@ describe("changes the description does not mention", () => {
     expect(report.summary.match(/\*\*Verify:\*\*/g)).toHaveLength(1);
     expect(report.summary).not.toContain("**Not mentioned in the description** (");
     expect(report.json.verdicts).toHaveLength(4);
+  });
+});
+
+describe("Jev answers table", () => {
+  const judged: ReportInput = {
+    ...WARNINGS,
+    findings: {
+      ...WARNINGS.findings,
+      flags: [{ hunkId: "src/auth/session.ts#0", id: "safety_check_weakened", kind: "warning", probability: 0.92, escalate: false }],
+    },
+    judgement: {
+      ...WARNINGS.judgement,
+      hunks: {
+        "src/auth/session.ts#0": jevAnswers({ safety_check_weakened: 0.92, mechanical: 0.03 }, { lowCoverage: true }),
+        "test/invoice.test.ts#0": jevAnswers({ test_loosened: 0.88 }, { unrelated: null, custom: { invoicing: 0.7 } }),
+        "db/migrations/007_drop_legacy.sql#0": jevAnswers({ mechanical: 0.97 }),
+      },
+    },
+  };
+  const report = buildReport(judged);
+  const table = report.summary.slice(report.summary.indexOf("<details>"), report.summary.indexOf("</details>"));
+
+  test("is collapsed, one row per judged hunk, reading order first, then the skipped ones", () => {
+    expect(table).toMatchSnapshot();
+    const rows = table.split("\n").filter((line) => line.startsWith("| `"));
+    expect(rows.map((row) => row.split("`")[1])).toEqual([
+      "src/auth/session.ts",
+      "test/invoice.test.ts",
+      "db/migrations/007_drop_legacy.sql",
+    ]);
+    expect(rows[2]).toContain("| skip |");
+  });
+
+  test("bolds the value that raised a flag, and only that one", () => {
+    expect(table.match(/\*\*\d\.\d\d\*\*/g)).toEqual(["**0.92**"]);
+  });
+
+  test("shows a dash where a question was not asked, custom questions get a column, a cut hunk is marked", () => {
+    const [first, second] = table.split("\n").filter((line) => line.startsWith("| `"));
+    expect(table).toContain("| undesc | invoicing | type |");
+    expect(second).toContain("| - | 0.70 | refactor 0.91 | auth 0.77 | end users 0.64 |");
+    expect(first).toContain("L1-13 (cut) | 4.80 |");
+    expect(table).toContain("description quality 1.62 of 2, tests cover the change 0.81");
+  });
+
+  test("the same answers are in the JSON block", () => {
+    const jev = extractJson(report.summary)!.jev!;
+    expect(jev.hunks["src/auth/session.ts#0"]).toMatchObject({
+      path: "src/auth/session.ts",
+      nouls: { safety_check_weakened: 0.92, unrelated_to_description: 0.1 },
+      changeType: { choice: "refactor", confidence: 0.91 },
+      lowCoverage: true,
+    });
+    expect(jev.pr).toEqual({ descriptionQuality: 1.62, testsCoverChange: 0.81 });
+  });
+
+  test("nothing judged means no table", () => {
+    expect(buildReport(WARNINGS).summary).not.toContain("<details>");
+  });
+
+  test("a comment too large for GitHub drops the raw answers from the JSON, keeps the capped table", () => {
+    const many = Array.from({ length: 200 }, (_, index) => hunk(`src/some/deeply/nested/module/path/file${index}.ts`, 1, 5));
+    const big = buildReport({
+      ...CLEAN,
+      hunks: many,
+      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
+      judgement: { ...CLEAN.judgement, hunks: Object.fromEntries(many.map((entry) => [entry.id, jevAnswers({})])) },
+      prUrl: "https://github.com/owner/repository/pull/123",
+    });
+    expect(big.summary.length).toBeLessThan(65_536);
+    expect(extractJson(big.summary)!.jev).toBeNull();
+    expect(big.json.jev).not.toBeNull();
+    expect(big.summary.split("\n").filter((line) => line.startsWith("| [`"))).toHaveLength(60);
+    expect(big.summary).toContain("And 140 more hunks");
   });
 });
 
