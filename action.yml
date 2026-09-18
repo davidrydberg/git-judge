@@ -1,0 +1,28 @@
+name: readfirst
+description: Tells the reviewer where to look and when a PR's story does not match its diff.
+author: David Rydberg
+
+inputs:
+  typesafe-api-key:
+    description: TypeSafe API key, used to judge every hunk with Jev.
+    required: true
+  openai-api-key:
+    description: OpenAI API key. Needed when the generator model in the policy is an OpenAI model, which is the default.
+    required: false
+  anthropic-api-key:
+    description: Anthropic API key. Needed only when the policy names a Claude model, for example for escalation.
+    required: false
+  github-token:
+    description: Token used to read the diff and to write comments and labels.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  conclusion:
+    description: success, failure, or did_not_run.
+  json:
+    description: The full findings and verdicts as JSON, the same data as the hidden block in the summary comment.
+
+runs:
+  using: node24
+  main: dist/index.cjs

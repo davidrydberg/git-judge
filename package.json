@@ -11,9 +11,13 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build": "esbuild src/action.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/index.cjs --legal-comments=none",
+    "try": "esbuild scripts/try.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=node_modules/.cache/readfirst-try.mjs && node --env-file=.env node_modules/.cache/readfirst-try.mjs"
   },
   "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
     "@anthropic-ai/sdk": "^0.126.0",
     "@typesafe-ai/sdk": "^0.6.0",
     "openai": "^7.18.0",
@@ -25,6 +29,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.1",
     "@types/picomatch": "^4.0.3",
+    "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
