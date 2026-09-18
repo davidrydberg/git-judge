@@ -261,6 +261,54 @@ describe("JSON block", () => {
   });
 });
 
+describe("a report another agent can act on", () => {
+  const edit = "@@ -2,3 +2,3 @@\n context\n-expect(total).toBe(100);\n+expect(total).toBeDefined();\n context";
+  const idOf = (hunks: Hunk[], hunkId: string) =>
+    buildReport({
+      ...input(findings(), { verdicts: [verdict("test/invoice.test.ts", "test_loosened", { hunkId })] }),
+      hunks,
+    }).json.verdicts[0]!.id;
+
+  test("names the commit it judged, in the JSON and in the footer", () => {
+    const report = buildReport({ ...WARNINGS, headSha: "0123456789abcdef0123456789abcdef01234567" });
+    expect(report.json.headSha).toBe("0123456789abcdef0123456789abcdef01234567");
+    expect(report.summary).toContain("<sub>judged at 0123456 | ");
+    expect(buildReport(WARNINGS).json.headSha).toBeNull();
+  });
+
+  test("a finding keeps its id when a push moves the hunk without touching its changed lines", () => {
+    const before = [hunk("test/invoice.test.ts", 2, 6, { content: edit })];
+    const after = [
+      hunk("test/invoice.test.ts", 40, 44, {
+        id: "test/invoice.test.ts#1",
+        content: edit.replace("@@ -2,3 +2,3 @@", "@@ -40,3 +40,3 @@").replaceAll("context", "other context"),
+      }),
+    ];
+    expect(idOf(after, "test/invoice.test.ts#1")).toBe(idOf(before, "test/invoice.test.ts#0"));
+  });
+
+  test("a finding gets a new id when its changed lines change", () => {
+    const before = [hunk("test/invoice.test.ts", 2, 6, { content: edit })];
+    const after = [hunk("test/invoice.test.ts", 2, 6, { content: edit.replace("toBeDefined()", "toBeGreaterThan(0)") })];
+    expect(idOf(after, "test/invoice.test.ts#0")).not.toBe(idOf(before, "test/invoice.test.ts#0"));
+  });
+
+  test("two flags on one hunk, and the same edit twice in one file, all get different ids", () => {
+    const hunks = [
+      hunk("test/invoice.test.ts", 2, 6, { content: edit }),
+      hunk("test/invoice.test.ts", 40, 44, { id: "test/invoice.test.ts#1", content: edit }),
+    ];
+    const verdicts = [
+      verdict("test/invoice.test.ts", "test_loosened"),
+      verdict("test/invoice.test.ts", "comment_drift"),
+      verdict("test/invoice.test.ts", "test_loosened", { hunkId: "test/invoice.test.ts#1" }),
+    ];
+    const ids = buildReport({ ...input(findings(), { verdicts }), hunks }).json.verdicts.map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids[2]).toBe(`${ids[0]}-2`);
+  });
+});
+
 describe("changes the description does not mention", () => {
   const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
   const report = buildReport(

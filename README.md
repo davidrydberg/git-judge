@@ -63,6 +63,10 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: git-judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   git-judge:
     runs-on: ubuntu-latest
@@ -77,6 +81,8 @@ jobs:
 
 No checkout step is needed, git-judge reads the diff through the GitHub API and never runs the PR's code.
 `edited` re-runs it when the description changes, so fixing the description clears the findings about it.
+The `concurrency` block cancels a run when a newer push arrives, so you do not pay to judge a commit nobody will read.
+A run that still finishes late checks the PR head before posting and writes nothing if the head has moved.
 There are no releases yet, so `@main` is the only ref.
 Pin a commit SHA instead if you do not want to follow `main`.
 
@@ -95,7 +101,7 @@ GitHub gives them no secrets, and running with `pull_request_target` has not had
 | Output | |
 |---|---|
 | `conclusion` | `success`, `failure`, or `did_not_run` |
-| `json` | The full findings, verdicts, reading order, and raw Jev answers |
+| `json` | The full findings, verdicts, reading order, and raw Jev answers, with the `headSha` that was judged and a stable `id` per finding |
 
 If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge did not run.
 Set `failOnError: true` in the policy to fail instead.
@@ -165,7 +171,8 @@ It can never fail the check.
 ## Limits you should know
 
 - The shipped thresholds are guesses. Jev's calibration differs per repo and per language, so expect to tune them. The Jev answers table in the comment is there to help with that.
-- A hunk that Jev marks mechanical is never read by a generative model, so a subtle bug inside one gets no second look. Set `minAttention: 0` to have every hunk considered.
+- A generative model reads only flagged hunks. A subtle bug in a hunk that raised no flag gets no second look, at any setting.
+- A hunk scoring under `minAttention` is left out of the reading order and can raise a gate but no warning. Set `minAttention: 0` to rank every hunk and let every warning fire on it.
 - The area and type labels are often wrong on small PRs.
 - A PR over GitHub's diff limit, about 300 files, ends as "did not run".
 - A hunk too large for Jev's context is judged on its first part only and listed as such in the comment.

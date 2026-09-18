@@ -32,6 +32,8 @@ export interface ReportInput {
   durationMs: number;
   /** For example https://github.com/owner/repo/pull/12. With it, every location links to its line in the diff. */
   prUrl?: string | undefined;
+  /** The commit the diff was read at. It ties the report to what was judged. */
+  headSha?: string | undefined;
 }
 
 // git-judge posts exactly one comment per PR and updates it in place. It posts no inline review
@@ -46,9 +48,12 @@ export interface Report {
 
 export interface ReportJson {
   version: 1;
+  /** The commit this report describes, or null when the caller did not say. */
+  headSha: string | null;
   conclusion: "success" | "failure";
   tldr: string | null;
-  verdicts: (Verdict & Location)[];
+  /** `id` survives a push that leaves the flagged lines alone, so a reader can tell a standing finding from a new one. */
+  verdicts: (Verdict & Location & { id: string })[];
   readingOrder: ({ hunkId: string; attention: number } & Location)[];
   /** Every raw Jev answer, per judged hunk and for the PR. Dropped only if the comment would be too large. */
   jev: { hunks: Record<string, JevRow>; pr: { descriptionQuality: number; testsCoverChange: number } } | null;
@@ -135,11 +140,20 @@ export function buildReport(input: ReportInput): Report {
     return hunk;
   };
 
+  const seen = new Map<string, number>();
   const json: ReportJson = {
     version: 1,
+    headSha: input.headSha ?? null,
     conclusion: findings.conclusion,
     tldr: written.tldr,
-    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
+    verdicts: written.verdicts.map((verdict) => {
+      const hunk = hunkOf(verdict.hunkId);
+      const id = findingId(verdict.flagId, hunk);
+      const count = (seen.get(id) ?? 0) + 1;
+      seen.set(id, count);
+      // The same edit twice in one file hashes the same, so the later one is numbered.
+      return { id: count === 1 ? id : `${id}-${count}`, ...verdict, ...locationOf(hunk) };
+    }),
     readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
       ...entry,
       ...locationOf(hunkOf(entry.hunkId)),
@@ -271,6 +285,13 @@ function renderJevTable(
   ];
 }
 
+// The hunk id is a position in the diff and moves when a push adds a hunk above it. This id is the
+// flag, the file, and the changed lines only, so it moves only when the flagged code itself does.
+function findingId(flagId: string, hunk: Hunk): string {
+  const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
+  return createHash("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
+}
+
 function locationOf(hunk: Hunk): Location {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
 }
@@ -391,7 +412,8 @@ function renderSummary(
   if (tableData) out.push(...renderJevTable(json, tableData, prUrl, flagged));
 
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
-  out.push("---", `<sub>${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
+  const commit = json.headSha ? `judged at ${json.headSha.slice(0, 7)} | ` : "";
+  out.push("---", `<sub>${commit}${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
 
   // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
   out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");

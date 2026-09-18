@@ -59,7 +59,7 @@ const policySchema = z.strictObject({
         .prefault({}),
     })
     .prefault({}),
-  /** Hunks scoring below this are counted as mechanical. Set to 0 to review every hunk. */
+  /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
   minAttention: z.number().min(0).default(0.5),
   /** Below this many characters the description is treated as missing. */
   minDescriptionLength: z.number().int().min(0).default(30),

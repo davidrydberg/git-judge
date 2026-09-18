@@ -95632,11 +95632,19 @@ function buildReport(input2) {
     if (!hunk) throw new Error(`Report refers to unknown hunk ${id}`);
     return hunk;
   };
+  const seen = /* @__PURE__ */ new Map();
   const json2 = {
     version: 1,
+    headSha: input2.headSha ?? null,
     conclusion: findings.conclusion,
     tldr: written.tldr,
-    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
+    verdicts: written.verdicts.map((verdict) => {
+      const hunk = hunkOf(verdict.hunkId);
+      const id = findingId(verdict.flagId, hunk);
+      const count = (seen.get(id) ?? 0) + 1;
+      seen.set(id, count);
+      return { id: count === 1 ? id : `${id}-${count}`, ...verdict, ...locationOf(hunk) };
+    }),
     readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
       ...entry,
       ...locationOf(hunkOf(entry.hunkId))
@@ -95747,6 +95755,10 @@ function renderJevTable(json2, jev, prUrl, flagged) {
     ""
   ];
 }
+function findingId(flagId, hunk) {
+  const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
+  return (0, import_node_crypto.createHash)("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
+}
 function locationOf(hunk) {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
 }
@@ -95841,7 +95853,8 @@ function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) 
   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
   if (tableData) out.push(...renderJevTable(json2, tableData, prUrl, flagged));
   const cost = json2.costUsd === null ? "cost unknown" : `about $${json2.costUsd.toFixed(4)}`;
-  out.push("---", `<sub>${plural2(hunkCount, "hunk")} | ${(json2.durationMs / 1e3).toFixed(1)} s | ${cost} | ${json2.models.join(", ")}</sub>`);
+  const commit = json2.headSha ? `judged at ${json2.headSha.slice(0, 7)} | ` : "";
+  out.push("---", `<sub>${commit}${plural2(hunkCount, "hunk")} | ${(json2.durationMs / 1e3).toFixed(1)} s | ${cost} | ${json2.models.join(", ")}</sub>`);
   out.push("", JSON_OPEN, JSON.stringify(json2).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
 }
@@ -95894,6 +95907,11 @@ function createGitHub(token, pr) {
         if (error63.status === 404) return "";
         throw error63;
       }
+    },
+    // Runs finish out of order. A run that lost the race must not write its report over a newer one.
+    async headMoved() {
+      const response = await octokit.rest.pulls.get({ ...repo, pull_number: pr.number });
+      return response.data.head.sha !== pr.headSha;
     },
     async upsertSummary(body) {
       const comments = await octokit.paginate(octokit.rest.issues.listComments, {
@@ -96998,7 +97016,7 @@ var policySchema = external_exports.strictObject({
       "money or data": weight.default(2)
     }).prefault({})
   }).prefault({}),
-  /** Hunks scoring below this are counted as mechanical. Set to 0 to review every hunk. */
+  /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
   minAttention: external_exports.number().min(0).default(0.5),
   /** Below this many characters the description is treated as missing. */
   minDescriptionLength: external_exports.number().int().min(0).default(30),
@@ -97332,7 +97350,7 @@ async function runPipeline(input2) {
     generator: input2.generator,
     escalationGenerator: input2.escalationGenerator
   });
-  return buildReport({ hunks, findings, written, judgement, durationMs: input2.now() - started, prUrl: input2.prUrl });
+  return buildReport({ hunks, findings, written, judgement, durationMs: input2.now() - started, prUrl: input2.prUrl, headSha: input2.headSha });
 }
 
 // src/action.ts
@@ -97350,7 +97368,8 @@ async function main() {
     owner: context2.repo.owner,
     repo: context2.repo.repo,
     number: pull.number,
-    baseSha: pull.base.sha
+    baseSha: pull.base.sha,
+    headSha: pull.head.sha
   });
   const policy = parsePolicy(await github.fetchPolicy());
   let report;
@@ -97369,10 +97388,12 @@ async function main() {
       generator: createGenerator(policy.generator.model, keys),
       escalationGenerator: escalation ? createGenerator(escalation.model, keys) : void 0,
       now: Date.now,
-      prUrl: pull.html_url
+      prUrl: pull.html_url,
+      headSha: pull.head.sha
     });
   } catch (error63) {
     const reason = error63 instanceof Error ? error63.message : String(error63);
+    if (await skipIfStale(github)) return;
     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
     await github.upsertSummary(didNotRun.summary);
     setOutput("conclusion", "did_not_run");
@@ -97380,12 +97401,19 @@ async function main() {
     else warning(`git-judge did not run: ${reason}`);
     return;
   }
+  if (await skipIfStale(github)) return;
   await github.upsertSummary(report.summary);
   await github.syncLabels(report.labels);
   setOutput("conclusion", report.check.conclusion);
   setOutput("json", JSON.stringify(report.json));
   if (report.check.conclusion === "failure") setFailed(report.check.title);
   else info(report.check.title);
+}
+async function skipIfStale(github) {
+  if (!await github.headMoved()) return false;
+  notice("The pull request has a newer commit. This run posts nothing, the run for that commit will.");
+  setOutput("conclusion", "did_not_run");
+  return true;
 }
 main().catch((error63) => {
   setFailed(error63 instanceof Error ? error63.message : String(error63));
