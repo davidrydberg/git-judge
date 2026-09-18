@@ -1,16 +1,15 @@
 import { getOctokit } from "@actions/github";
-import { inlineKey, isSummaryComment, type InlineComment } from "./report.js";
+import { isSummaryComment } from "./report.js";
 
-export const POLICY_PATH = ".readfirst.yml";
+export const POLICY_PATH = ".git-judge.yml";
 
-// Label prefixes readfirst owns. Labels with these prefixes are removed when they no longer apply.
+// Label prefixes git-judge owns. Labels with these prefixes are removed when they no longer apply.
 const MANAGED_LABEL = /^(area|size|type): /;
 
 export interface PullRequestRef {
   owner: string;
   repo: string;
   number: number;
-  headSha: string;
   baseSha: string;
 }
 
@@ -18,7 +17,6 @@ export interface GitHub {
   fetchDiff(): Promise<string>;
   fetchPolicy(): Promise<string>;
   upsertSummary(body: string): Promise<void>;
-  reconcileInline(comments: InlineComment[]): Promise<void>;
   syncLabels(labels: string[]): Promise<void>;
 }
 
@@ -65,38 +63,6 @@ export function createGitHub(token: string, pr: PullRequestRef): GitHub {
       } else {
         await octokit.rest.issues.createComment({ ...repo, issue_number: pr.number, body });
       }
-    },
-
-    async reconcileInline(comments) {
-      const wanted = new Map(comments.map((comment) => [comment.key, comment]));
-      const existing = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
-        ...repo,
-        pull_number: pr.number,
-        per_page: 100,
-      });
-      for (const comment of existing) {
-        const key = inlineKey(comment.body);
-        if (key === null || comment.in_reply_to_id !== undefined) continue;
-        if (wanted.has(key)) {
-          // Still valid. Leave it in place so replies on it survive.
-          wanted.delete(key);
-        } else {
-          await octokit.rest.pulls.deleteReviewComment({ ...repo, comment_id: comment.id });
-        }
-      }
-      if (wanted.size === 0) return;
-      await octokit.rest.pulls.createReview({
-        ...repo,
-        pull_number: pr.number,
-        commit_id: pr.headSha,
-        event: "COMMENT",
-        comments: [...wanted.values()].map((comment) => ({
-          path: comment.path,
-          line: comment.anchor.line,
-          side: comment.anchor.side,
-          body: comment.body,
-        })),
-      });
     },
 
     async syncLabels(labels) {

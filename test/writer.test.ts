@@ -43,7 +43,6 @@ function hunk(path: string, content = `@@ -1 +1 @@\n-old ${path}\n+new ${path}`)
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content,
-    hash: path,
   };
 }
 
@@ -57,6 +56,10 @@ function input(flags: Flag[], generator: Generator, overrides: Partial<WriterInp
   return {
     flags,
     hunks: [...paths.map((path) => hunk(path)), hunk("src/unflagged.ts", "@@ -1 +1 @@\n+UNFLAGGED_MARKER")],
+    overview: [
+      { path: "src/auth.ts", changeTypes: ["refactor"] },
+      { path: "docs/guide.md", changeTypes: ["docs"] },
+    ],
     title: "Refactor session handling",
     description: "Pure refactor, no behaviour change.",
     policy: parsePolicy(""),
@@ -158,19 +161,28 @@ describe("what the generator is shown", () => {
     expect(tldr).toBe("Drops the expiry check.");
     expect(tldrRequest.prompt).toContain("Refactor session handling");
     expect(tldrRequest.prompt).toContain("Changed src/auth.ts.");
+    expect(tldrRequest.prompt).toContain("- docs/guide.md: docs");
     expect(tldrRequest.prompt).not.toContain("src/noise.ts");
     expect(tldrRequest.prompt).not.toContain("+new");
     expect(tldrRequest.prompt).not.toContain("<diff>");
   });
 
-  test("nothing confirmed means no TL;DR call", async () => {
-    const { generator, requests } = fakeGenerator("gpt-5.6-luna", { "src/noise.ts": { confirmed: false } });
-    const none = await write(input([], generator));
-    const rejected = await write(input([flag("src/noise.ts", "comment_drift")], generator));
+  test("a clean PR still gets a TL;DR, from the file overview, told there are no findings", async () => {
+    const { generator, requests } = fakeGenerator("gpt-5.6-luna");
+    const { tldr } = await write(input([], generator));
 
-    expect(none.tldr).toBeNull();
-    expect(rejected.tldr).toBeNull();
-    expect(requests.some((request) => request.schemaName === "tldr")).toBe(false);
+    expect(tldr).not.toBeNull();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.prompt).toContain("- src/auth.ts: refactor");
+    expect(requests[0]!.prompt).toContain("Confirmed findings:\n- none");
+  });
+
+  test("nothing judged and nothing confirmed means no TL;DR call", async () => {
+    const { generator, requests } = fakeGenerator("gpt-5.6-luna");
+    const { tldr } = await write(input([], generator, { overview: [] }));
+
+    expect(tldr).toBeNull();
+    expect(requests).toEqual([]);
   });
 });
 

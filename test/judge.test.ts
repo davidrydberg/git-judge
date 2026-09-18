@@ -1,7 +1,13 @@
 import { TypeSafeClient, type Questions, type SystemOneRequest } from "@typesafe-ai/sdk";
 import { describe, expect, test } from "vitest";
 import type { Hunk } from "../src/diff.js";
-import { estimateTokens, judge, type JudgeClient, type PullRequestMeta } from "../src/judge.js";
+import {
+  estimateTokens,
+  judge,
+  REQUEST_OVERHEAD_TOKENS,
+  type JudgeClient,
+  type PullRequestMeta,
+} from "../src/judge.js";
 
 function cannedAnswers(questions: Questions): Record<string, unknown> {
   return Object.fromEntries(
@@ -53,7 +59,6 @@ function hunk(id: string, overrides: Partial<Hunk> = {}): Hunk {
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content: "@@ -1,2 +1,2 @@\n-const fee = 1;\n+const fee = 0;",
-    hash: "h",
     ...overrides,
   };
 }
@@ -150,7 +155,7 @@ describe("what reaches the model", () => {
     expect(result.hunks.small!.lowCoverage).toBe(false);
     for (const request of requests) {
       const longest = Math.max(...Object.values(request.questions).map(estimateTokens));
-      expect(estimateTokens(request.state) + longest).toBeLessThanOrEqual(32_000);
+      expect(estimateTokens(request.state) + longest + REQUEST_OVERHEAD_TOKENS).toBeLessThanOrEqual(32_000);
     }
     const sent = stateOf(requests.find((request) => stateOf(request).diff !== hunk("small").content && asksFor(request, "mechanical"))!);
     expect(String(sent.diff).endsWith(line)).toBe(true);

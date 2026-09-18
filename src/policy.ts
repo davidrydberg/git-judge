@@ -111,10 +111,10 @@ export type Policy = z.infer<typeof policySchema>;
 /** Parses the policy file. An empty or missing file gives the defaults. Unknown keys are errors. */
 export function parsePolicy(yaml: string): Policy {
   const parsed = policySchema.safeParse(parseYaml(yaml) ?? {});
-  if (!parsed.success) throw new Error(`Invalid readfirst policy:\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new Error(`Invalid git-judge policy:\n${z.prettifyError(parsed.error)}`);
   const ids = parsed.data.customQuestions.map((question) => question.id);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicate) throw new Error(`Invalid readfirst policy:\ncustom question id "${duplicate}" is used twice`);
+  if (duplicate) throw new Error(`Invalid git-judge policy:\ncustom question id "${duplicate}" is used twice`);
   return parsed.data;
 }
 
@@ -162,12 +162,20 @@ export function selectForJudging(hunks: Hunk[], policy: Policy): { judged: Hunk[
   return { judged: candidates.slice(0, policy.maxHunks), overCap: candidates.slice(policy.maxHunks) };
 }
 
+/** A hunk counts as a refactor only when Jev picks that type with enough confidence. */
+function claimsRefactor(answers: HunkAnswers, policy: Policy): boolean {
+  const type = answers.code.change_type;
+  return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
+}
+
 export function attention(answers: HunkAnswers, policy: Policy): number {
   const { code } = answers;
+  // Every feature and bugfix changes behaviour, and Jev says so at 0.95. Counted for all hunks it
+  // drowned out the other two signals, so it counts only where it is a finding: inside a refactor.
   const judgement = Math.max(
     code.test_loosened.noul,
     code.safety_check_weakened.noul,
-    code.refactor_changes_behaviour.noul,
+    claimsRefactor(answers, policy) ? code.refactor_changes_behaviour.noul : 0,
   );
   return (
     (1 - code.mechanical.noul) *
@@ -234,10 +242,13 @@ export function evaluate(
     const { code, mismatch, custom } = answers;
     const thresholds = policy.thresholds.warnings;
     warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
-    warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    // In a test file a weakened check is a loosened test, which is already its own flag.
+    if (!hunk.isTest) {
+      warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    }
     warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
     // Changing behaviour is only worth a warning when the hunk presents itself as a refactor.
-    if (code.change_type.choice === "refactor" && confident(code.change_type)) {
+    if (claimsRefactor(answers, policy)) {
       warn(
         "refactor_changes_behaviour",
         code.refactor_changes_behaviour.noul,

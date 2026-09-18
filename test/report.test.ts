@@ -6,7 +6,6 @@ import {
   buildReport,
   costUsd,
   extractJson,
-  inlineKey,
   isSummaryComment,
   type ReportInput,
 } from "../src/report.js";
@@ -26,7 +25,6 @@ function hunk(path: string, startLine: number, endLine: number, overrides: Parti
     preClass: null,
     anchor: { line: startLine, side: "RIGHT" },
     content: "",
-    hash: `${"ab12".repeat(4)}${path.length}`.padEnd(64, "0"),
     ...overrides,
   };
 }
@@ -153,7 +151,7 @@ describe("summary comment", () => {
     expect(buildReport(reportInput).summary).toMatchSnapshot();
   });
 
-  test("readfirst did not run", () => {
+  test("git-judge did not run", () => {
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", false)).toMatchSnapshot();
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", true).check.conclusion).toBe(
       "failure",
@@ -163,21 +161,57 @@ describe("summary comment", () => {
   test("starts with the marker used to find and update it", () => {
     expect(isSummaryComment(buildReport(CLEAN).summary)).toBe(true);
     expect(isSummaryComment(buildDidNotRunReport("down", false).summary)).toBe(true);
-    expect(isSummaryComment("## readfirst looks nice")).toBe(false);
+    expect(isSummaryComment("## git-judge looks nice")).toBe(false);
   });
 
-  test("a long reading order is cut in the comment but complete in the JSON", () => {
+  test("unflagged hunks are cut to a handful in the comment but complete in the JSON", () => {
     const many = Array.from({ length: 40 }, (_, index) => hunk(`src/file${index}.ts`, 1, 5));
     const report = buildReport({
       ...CLEAN,
       hunks: many,
       findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
     });
-    expect(report.summary).toContain("15. `src/file14.ts`");
-    expect(report.summary).not.toContain("16. `");
-    expect(report.summary).toContain("And 25 more hunks");
+    expect(report.summary).toContain("5. `src/file4.ts`");
+    expect(report.summary).not.toContain("6. `");
+    expect(report.summary).toContain("And 35 more hunks");
     expect(report.json.readingOrder).toHaveLength(40);
   });
+
+  test("a hunk with a confirmed finding is read before an unflagged hunk with higher attention", () => {
+    const report = buildReport(
+      input(
+        findings({
+          readingOrder: [
+            { hunkId: "src/util/format.ts#0", attention: 3.1 },
+            { hunkId: "src/auth/session.ts#0", attention: 2.9 },
+            { hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 0.2 },
+          ],
+        }),
+        {
+          tldr: "x",
+          verdicts: [
+            verdict("src/auth/session.ts", "safety_check_weakened"),
+            verdict("db/migrations/007_drop_legacy.sql", "destructive_data", { kind: "gate" }),
+          ],
+        },
+      ),
+    );
+    expect(report.json.readingOrder.map((entry) => entry.path)).toEqual([
+      "db/migrations/007_drop_legacy.sql",
+      "src/auth/session.ts",
+      "src/util/format.ts",
+    ]);
+  });
+});
+
+test("a hunk that only removes lines shows no bogus line number", () => {
+  const removed = hunk("src/old.ts", 0, -1);
+  const report = buildReport({
+    ...CLEAN,
+    hunks: [removed],
+    findings: findings({ readingOrder: [{ hunkId: removed.id, attention: 1 }] }),
+  });
+  expect(report.summary).toContain("1. `src/old.ts` (lines removed)");
 });
 
 describe("JSON block", () => {
@@ -189,7 +223,7 @@ describe("JSON block", () => {
   test("text that would close the HTML comment early is escaped and still round-trips", () => {
     const hostile = "Ends the comment --> <script>alert(1)</script>";
     const report = buildReport(input(findings(), { tldr: hostile, verdicts: [] }));
-    const block = report.summary.slice(report.summary.indexOf("<!-- readfirst:json"));
+    const block = report.summary.slice(report.summary.indexOf("<!-- git-judge:json"));
     expect(block.match(/-->/g)).toHaveLength(1);
     expect(extractJson(report.summary)!.tldr).toBe(hostile);
   });
@@ -199,42 +233,71 @@ describe("JSON block", () => {
   });
 });
 
-describe("inline comments", () => {
-  test("one per verdict, anchored to the hunk", () => {
-    const report = buildReport(WARNINGS);
-    expect(report.inline.map((comment) => [comment.path, comment.anchor])).toEqual([
-      ["src/auth/session.ts", { line: 1, side: "RIGHT" }],
-      ["test/invoice.test.ts", { line: 2, side: "RIGHT" }],
-    ]);
-    expect(report.inline[0]!.body).toMatchSnapshot();
+describe("changes the description does not mention", () => {
+  const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
+  const report = buildReport(
+    input(findings({ readingOrder: paths.map((path) => ({ hunkId: `${path}#0`, attention: 1 })) }), {
+      tldr: "Renames things.",
+      verdicts: [
+        ...paths.map((path) => verdict(path, "unrelated_to_description")),
+        verdict("src/auth/session.ts", "safety_check_weakened"),
+      ],
+    }),
+  );
+
+  test("are reported once in the summary, with the files, not once per hunk", () => {
+    expect(report.summary).toMatchSnapshot();
+    expect(report.summary.match(/not covered by what the PR says/g)).toHaveLength(1);
+    expect(report.summary).toContain("Changes in 3 files");
   });
 
-  test("the key is recoverable from the body and changes with file, flag, or hunk content", () => {
-    const [first, second] = buildReport(WARNINGS).inline;
-    expect(inlineKey(first!.body)).toBe(first!.key);
-    expect(first!.key).not.toBe(second!.key);
-    expect(inlineKey("A human comment")).toBeNull();
+  test("are not repeated as findings, other findings on the same hunk still are", () => {
+    expect(report.summary.match(/\*\*Verify:\*\*/g)).toHaveLength(1);
+    expect(report.summary).not.toContain("**Not mentioned in the description** (");
+    expect(report.json.verdicts).toHaveLength(4);
+  });
+});
 
-    const edited = HUNKS.map((entry) => (entry.path === "src/auth/session.ts" ? { ...entry, hash: "f".repeat(64) } : entry));
-    expect(buildReport({ ...WARNINGS, hunks: edited }).inline[0]!.key).not.toBe(first!.key);
+describe("one complete comment", () => {
+  test("every finding carries what changed and what to verify, in reading order", () => {
+    const { summary } = buildReport(WARNINGS);
+    const first = summary.indexOf("**Safety check weakened** (high) in `src/auth/session.ts` L1-13");
+    const second = summary.indexOf("**Test loosened** (medium) in `test/invoice.test.ts` L2-6");
+    expect(first).toBeGreaterThan(-1);
+    expect(second).toBeGreaterThan(first);
+    expect(summary).toContain(
+      "L1-13<br>\n  The expiry check on the token claims was removed.<br>\n  **Verify:** Confirm expired tokens are still rejected somewhere else.\n",
+    );
   });
 
-  test("a path with spaces still gives a key without spaces", () => {
-    const spaced = hunk("docs/my notes/plan.md", 1, 2);
-    const report = buildReport({
-      ...CLEAN,
-      hunks: [spaced],
-      findings: findings(),
-      written: { verdicts: [verdict("docs/my notes/plan.md", "comment_drift")], tldr: "x", usage: {} },
-    });
-    expect(inlineKey(report.inline[0]!.body)).toBe(report.inline[0]!.key);
+  test("unflagged hunks follow under their own heading", () => {
+    const { summary } = buildReport(WARNINGS);
+    expect(summary).toContain("### Then read\n\n1. `src/util/format.ts` L10");
+    expect(buildReport(CLEAN).summary).toContain("### Read in this order\n\n1. `src/util/format.ts` L10");
+  });
+
+  test("with the PR URL every location links to its first changed line in the diff", () => {
+    const moved = HUNKS.map((entry) =>
+      entry.path === "test/invoice.test.ts" ? { ...entry, anchor: { line: 5, side: "LEFT" as const } } : entry,
+    );
+    const { summary } = buildReport({ ...WARNINGS, hunks: moved, prUrl: "https://github.com/o/r/pull/7" });
+    // sha256("src/auth/session.ts") and sha256("test/invoice.test.ts")
+    expect(summary).toContain(
+      "[`src/auth/session.ts` L1-13](https://github.com/o/r/pull/7/files#diff-947e1ee9f63eea17",
+    );
+    expect(summary).toMatch(/\[`test\/invoice\.test\.ts` L2-6\]\(https:\/\/github\.com\/o\/r\/pull\/7\/files#diff-[0-9a-f]{64}L5\)/);
+    expect(summary).toMatch(/\[`src\/util\/format\.ts` L10\]\(.*#diff-[0-9a-f]{64}R10\)/);
+  });
+
+  test("the report has no inline comments to post", () => {
+    expect(Object.keys(buildReport(WARNINGS)).sort()).toEqual(["check", "json", "labels", "summary"]);
   });
 });
 
 describe("check", () => {
   test.each([
     ["clean", CLEAN, "success", "Nothing flagged"],
-    ["warnings", WARNINGS, "success", "2 findings to read first"],
+    ["warnings", WARNINGS, "success", "2 findings to check"],
     ["gated", GATED, "failure", "Blocked: destructive data change"],
   ])("%s", (_name, reportInput, conclusion, title) => {
     expect(buildReport(reportInput).check).toMatchObject({ conclusion, title });

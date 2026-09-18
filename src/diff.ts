@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import picomatch from "picomatch";
 
 export type PreClass = "lockfile" | "generated" | "vendored";
@@ -30,12 +29,10 @@ export interface Hunk {
   deleted: number;
   size: number;
   preClass: PreClass | null;
-  /** First changed line, where an inline comment is anchored. */
+  /** First changed line, where the report links to. */
   anchor: Anchor;
   /** Hunk header plus body, exactly as it appeared in the diff. */
   content: string;
-  /** Hash of the changed lines only, so a hunk that merely moved keeps its hash. */
-  hash: string;
 }
 
 export interface ParsedDiff {
@@ -257,7 +254,6 @@ function parseHunk(
   let added = 0;
   let deleted = 0;
   let anchor: Anchor | null = null;
-  const changed: string[] = [];
 
   let i = start + 1;
   for (; i < lines.length; i++) {
@@ -269,13 +265,11 @@ function parseHunk(
       added++;
       newLine++;
       newRemaining--;
-      changed.push(line);
     } else if (line.startsWith("-")) {
       anchor ??= { line: oldLine, side: "LEFT" };
       deleted++;
       oldLine++;
       oldRemaining--;
-      changed.push(line);
     } else {
       oldLine++;
       newLine++;
@@ -297,7 +291,6 @@ function parseHunk(
     preClass: file.preClass,
     anchor: anchor ?? { line: newStart, side: "RIGHT" },
     content: lines.slice(start, i).join("\n"),
-    hash: createHash("sha256").update(changed.join("\n")).digest("hex"),
   };
   return { hunk, next: i };
 }

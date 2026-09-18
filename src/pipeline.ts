@@ -14,6 +14,7 @@ export interface PipelineInput {
   escalationGenerator?: Generator | undefined;
   /** Milliseconds clock, injected so the reported duration is testable. */
   now: () => number;
+  prUrl?: string | undefined;
 }
 
 /** Diff in, report out. Touches no network except through the injected clients. */
@@ -34,8 +35,17 @@ export async function runPipeline(input: PipelineInput): Promise<Report> {
     },
   );
   const findings = evaluate(hunks, judgement, description, policy);
+
+  const typesByFile = new Map<string, Set<string>>();
+  for (const hunk of judged) {
+    const type = judgement.hunks[hunk.id]?.code.change_type.choice;
+    if (type) typesByFile.set(hunk.path, (typesByFile.get(hunk.path) ?? new Set()).add(type));
+  }
+  const overview = [...typesByFile].map(([path, types]) => ({ path, changeTypes: [...types].sort() }));
+
   const written = await write({
     flags: findings.flags,
+    overview,
     hunks,
     title,
     description,
@@ -43,5 +53,5 @@ export async function runPipeline(input: PipelineInput): Promise<Report> {
     generator: input.generator,
     escalationGenerator: input.escalationGenerator,
   });
-  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started });
+  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started, prUrl: input.prUrl });
 }

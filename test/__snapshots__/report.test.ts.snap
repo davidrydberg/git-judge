@@ -1,18 +1,42 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`inline comments > one per verdict, anchored to the hunk 1`] = `
-"**Read first: Safety check weakened** (high)
+exports[`changes the description does not mention > are reported once in the summary, with the files, not once per hunk 1`] = `
+"<!-- git-judge:summary -->
+## git-judge
 
-The expiry check on the token claims was removed.
+**TL;DR** Renames things.
 
-**Verify:** Confirm expired tokens are still rejected somewhere else.
+### Read first
 
-<!-- readfirst:inline key=src%2Fauth%2Fsession.ts:safety_check_weakened:ab12ab12ab12ab12 -->"
+- **Safety check weakened** (medium) in \`src/auth/session.ts\` L1-13<br>
+  Something changed in src/auth/session.ts.<br>
+  **Verify:** Check src/auth/session.ts before approving.
+
+### Then read
+
+1. \`test/invoice.test.ts\` L2-6
+2. \`src/util/format.ts\` L10
+
+### Not mentioned in the description
+
+Changes in 3 files are not covered by what the PR says it does: \`src/auth/session.ts\`, \`test/invoice.test.ts\`, \`src/util/format.ts\`.
+Update the description, or move them to their own PR.
+
+### Skip
+
+1 lockfile.
+
+---
+<sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+
+<!-- git-judge:json
+{"version":1,"conclusion":"success","tldr":"Renames things.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/util/format.ts.","whatToVerify":"Check src/util/format.ts before approving.","model":"gpt-5.6-luna","path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}},{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":1,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":1,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+-->"
 `;
 
 exports[`summary comment > PR over the hunk cap 1`] = `
-"<!-- readfirst:summary -->
-## readfirst
+"<!-- git-judge:summary -->
+## git-judge
 
 Nothing flagged.
 
@@ -32,22 +56,29 @@ Nothing flagged.
 ---
 <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
 
-<!-- readfirst:json
-{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10}],"prWarnings":[{"id":"no_description"}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":140},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+<!-- git-judge:json
+{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[{"id":"no_description"}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":140},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
 -->"
 `;
 
 exports[`summary comment > PR with warnings 1`] = `
-"<!-- readfirst:summary -->
-## readfirst
+"<!-- git-judge:summary -->
+## git-judge
 
 **TL;DR** Presented as a refactor, but it removes the token expiry check. One test was loosened to match.
 
-### Read in this order
+### Read first
 
-1. \`src/auth/session.ts\` L1-13 - **Safety check weakened** (high). The expiry check on the token claims was removed.
-2. \`test/invoice.test.ts\` L2-6 - **Test loosened** (medium). Something changed in test/invoice.test.ts.
-3. \`src/util/format.ts\` L10
+- **Safety check weakened** (high) in \`src/auth/session.ts\` L1-13<br>
+  The expiry check on the token claims was removed.<br>
+  **Verify:** Confirm expired tokens are still rejected somewhere else.
+- **Test loosened** (medium) in \`test/invoice.test.ts\` L2-6<br>
+  Something changed in test/invoice.test.ts.<br>
+  **Verify:** Check test/invoice.test.ts before approving.
+
+### Then read
+
+1. \`src/util/format.ts\` L10
 
 ### Skip
 
@@ -62,14 +93,14 @@ exports[`summary comment > PR with warnings 1`] = `
 ---
 <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
 
-<!-- readfirst:json
-{"version":1,"conclusion":"success","tldr":"Presented as a refactor, but it removes the token expiry check. One test was loosened to match.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"high","whatChanged":"The expiry check on the token claims was removed.","whatToVerify":"Confirm expired tokens are still rejected somewhere else.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13},{"hunkId":"test/invoice.test.ts#0","flagId":"test_loosened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":4.8,"path":"src/auth/session.ts","startLine":1,"endLine":13},{"hunkId":"test/invoice.test.ts#0","attention":2.4,"path":"test/invoice.test.ts","startLine":2,"endLine":6},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10}],"prWarnings":[{"id":"weak_description","score":0.4},{"id":"split_suggested","changeTypes":["chore","feature","refactor"]}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":["src/auth/session.ts#0"],"labels":["area: auth","size: S","type: refactor"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+<!-- git-judge:json
+{"version":1,"conclusion":"success","tldr":"Presented as a refactor, but it removes the token expiry check. One test was loosened to match.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"high","whatChanged":"The expiry check on the token claims was removed.","whatToVerify":"Confirm expired tokens are still rejected somewhere else.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","flagId":"test_loosened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":4.8,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":2.4,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[{"id":"weak_description","score":0.4},{"id":"split_suggested","changeTypes":["chore","feature","refactor"]}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":["src/auth/session.ts#0"],"labels":["area: auth","size: S","type: refactor"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
 -->"
 `;
 
 exports[`summary comment > clean PR 1`] = `
-"<!-- readfirst:summary -->
-## readfirst
+"<!-- git-judge:summary -->
+## git-judge
 
 Nothing flagged.
 
@@ -85,24 +116,25 @@ Mechanical hunks were judged by Jev only, no generative model read them.
 ---
 <sub>5 hunks | 3.2 s | about $0.0025 | jev-1.13.0</sub>
 
-<!-- readfirst:json
-{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10}],"prWarnings":[],"skipped":{"mechanical":3,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0"],"costUsd":0.00252,"durationMs":3240}
+<!-- git-judge:json
+{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":3,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0"],"costUsd":0.00252,"durationMs":3240}
 -->"
 `;
 
 exports[`summary comment > gated PR 1`] = `
-"<!-- readfirst:summary -->
-## readfirst
+"<!-- git-judge:summary -->
+## git-judge
 
 **TL;DR** Drops the legacy_orders table.
 
 ### Blocking
 
-- **Destructive data change** in \`db/migrations/007_drop_legacy.sql\` L1-4. Check db/migrations/007_drop_legacy.sql before approving. The writer model did not see this in the code, but a gate is cleared only by a human.
+The check fails until a human clears these.
 
-### Read in this order
-
-1. \`db/migrations/007_drop_legacy.sql\` L1-4 - **Destructive data change** (high). Something changed in db/migrations/007_drop_legacy.sql.
+- **Destructive data change** (high) in \`db/migrations/007_drop_legacy.sql\` L1-4<br>
+  Something changed in db/migrations/007_drop_legacy.sql.<br>
+  **Verify:** Check db/migrations/007_drop_legacy.sql before approving.<br>
+  The writer model did not see this in the code, but a gate is cleared only by a human.
 
 ### Skip
 
@@ -111,22 +143,22 @@ exports[`summary comment > gated PR 1`] = `
 ---
 <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
 
-<!-- readfirst:json
-{"version":1,"conclusion":"failure","tldr":"Drops the legacy_orders table.","verdicts":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","flagId":"destructive_data","kind":"gate","probability":0.8,"confirmed":false,"severity":"high","whatChanged":"Something changed in db/migrations/007_drop_legacy.sql.","whatToVerify":"Check db/migrations/007_drop_legacy.sql before approving.","model":"gpt-5.6-luna","path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4}],"readingOrder":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","attention":4,"path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+<!-- git-judge:json
+{"version":1,"conclusion":"failure","tldr":"Drops the legacy_orders table.","verdicts":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","flagId":"destructive_data","kind":"gate","probability":0.8,"confirmed":false,"severity":"high","whatChanged":"Something changed in db/migrations/007_drop_legacy.sql.","whatToVerify":"Check db/migrations/007_drop_legacy.sql before approving.","model":"gpt-5.6-luna","path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","attention":4,"path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
 -->"
 `;
 
-exports[`summary comment > readfirst did not run 1`] = `
+exports[`summary comment > git-judge did not run 1`] = `
 {
   "check": {
     "conclusion": "success",
     "summary": "TypeSafe returned 529 Overloaded after 5 attempts.",
-    "title": "readfirst did not run",
+    "title": "git-judge did not run",
   },
-  "summary": "<!-- readfirst:summary -->
-## readfirst
+  "summary": "<!-- git-judge:summary -->
+## git-judge
 
-**readfirst did not run on this push.** This PR has not been judged.
+**git-judge did not run on this push.** This PR has not been judged.
 
 Reason: TypeSafe returned 529 Overloaded after 5 attempts.
 

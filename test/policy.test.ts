@@ -77,7 +77,6 @@ function hunk(id: string, overrides: Partial<Hunk> = {}): Hunk {
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content: "",
-    hash: id,
     ...overrides,
   };
 }
@@ -125,7 +124,7 @@ describe("policy file", () => {
     ["a custom question id with a colon", "customQuestions:\n  - id: 'a:b'\n    question: x"],
     ["a duplicate custom question id", "customQuestions:\n  - {id: a, question: x}\n  - {id: a, question: y}"],
   ])("%s is rejected", (_name, yaml) => {
-    expect(() => parsePolicy(yaml)).toThrow(/Invalid readfirst policy/);
+    expect(() => parsePolicy(yaml)).toThrow(/Invalid git-judge policy/);
   });
 });
 
@@ -137,8 +136,11 @@ describe("attention formula", () => {
     ["fully mechanical", { mechanical: 1 }, 0],
     ["auth and money: 1 * 2 * 2", { area: "auth", blast: "money or data" }, 4],
     ["half mechanical public API: 0.5 * 1.5 * 1", { mechanical: 0.5, area: "public_api" }, 0.75],
-    ["judgement adds twice its highest probability", { mechanical: 1, testLoosened: 0.3, safety: 0.8, behaviour: 0.5 }, 1.6],
+    ["judgement adds twice its highest probability", { mechanical: 1, testLoosened: 0.3, safety: 0.8 }, 1.6],
     ["both terms: 1 * 2 * 1.5 + 2 * 0.9", { area: "payments", blast: "end users", safety: 0.9 }, 4.8],
+    ["a feature changing behaviour is normal and adds nothing", { behaviour: 0.95, type: "feature" }, 1],
+    ["a refactor changing behaviour adds twice the probability", { behaviour: 0.95, type: "refactor" }, 2.9],
+    ["an unsure refactor adds nothing", { behaviour: 0.95, type: "refactor", typeConfidence: 0.3 }, 1],
   ])("%s", (_name, spec, expected) => {
     expect(attention(answers(spec), policy)).toBeCloseTo(expected);
   });
@@ -227,6 +229,20 @@ describe("warnings", () => {
     ["unsure it is a refactor", { behaviour: 0.95, type: "refactor", typeConfidence: 0.3 }, []],
   ])("%s", (_name, spec, expected) => {
     expect(flagIds(run({ h: spec }))).toEqual(expected);
+  });
+});
+
+describe("test files", () => {
+  test("a weakened check in a test file is reported once, as a loosened test", () => {
+    const hunks = [hunk("spec", { isTest: true }), hunk("code")];
+    const spec = { testLoosened: 0.9, safety: 0.9 };
+    const judgement = {
+      hunks: { spec: answers(spec), code: answers(spec) },
+      pr: { description_quality: { score: 2 }, tests_cover_change: { noul: 1 } },
+    } as unknown as Judgement;
+    const findings = evaluate(hunks, judgement, DESCRIPTION, parsePolicy(""));
+
+    expect(flagIds(findings)).toEqual(["spec:test_loosened", "code:test_loosened", "code:safety_check_weakened"]);
   });
 });
 

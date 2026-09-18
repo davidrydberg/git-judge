@@ -50,7 +50,10 @@ export interface Judgement {
 
 // Jev allows 32k tokens for the state plus the longest question, and 64k for the state plus
 // all questions. TypeSafe documents no tokenizer, so tokens are estimated from characters.
-// Three characters per token overestimates for code, which keeps requests under the cap.
+// Measured against jev-1.13.0 on 2026-09-18: code runs at about 3.8 characters per token, so three
+// overestimates and keeps requests under the cap. Every request also carries about 270 tokens of
+// fixed overhead that is not part of the state or the questions.
+export const REQUEST_OVERHEAD_TOKENS = 300;
 const STATE_AND_LONGEST_QUESTION_TOKENS = 32_000;
 const STATE_AND_ALL_QUESTIONS_TOKENS = 64_000;
 const CHARS_PER_TOKEN = 3;
@@ -149,7 +152,7 @@ function stateBudgetChars(questions: Questions): number {
     STATE_AND_LONGEST_QUESTION_TOKENS - Math.max(...sizes),
     STATE_AND_ALL_QUESTIONS_TOKENS - sizes.reduce((sum, size) => sum + size, 0),
   );
-  return tokens * CHARS_PER_TOKEN;
+  return (tokens - REQUEST_OVERHEAD_TOKENS) * CHARS_PER_TOKEN;
 }
 
 /** Adds the hunk to the state as `diff`, cut at a line boundary if the state would exceed the cap. */
