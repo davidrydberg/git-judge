@@ -6,7 +6,12 @@ import type { Verdict, Written } from "./writer.js";
 export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
 const JSON_OPEN = "<!-- git-judge:json";
 const INLINE_MARKER = /<!-- git-judge:inline key=(\S+) -->/;
-const MAX_READING_ORDER = 15;
+const MAX_FLAGGED_LISTED = 15;
+const MAX_UNFLAGGED_LISTED = 5;
+const MAX_FILES_LISTED = 10;
+// A statement about the PR rather than about a line, so it is reported once in the summary
+// and never as an inline comment. One PR raised it on 18 hunks with the same sentence.
+const PR_LEVEL_FLAG = "unrelated_to_description";
 
 // US dollars per million tokens, input then output. A model missing here is left out of the cost.
 const PRICES: Record<string, [number, number]> = {
@@ -119,7 +124,7 @@ export function buildReport(input: ReportInput): Report {
       const { path, startLine, endLine } = hunkOf(verdict.hunkId);
       return { ...verdict, path, startLine, endLine };
     }),
-    readingOrder: findings.readingOrder.map((entry) => {
+    readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => {
       const { path, startLine, endLine } = hunkOf(entry.hunkId);
       return { ...entry, path, startLine, endLine };
     }),
@@ -135,7 +140,7 @@ export function buildReport(input: ReportInput): Report {
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   return {
     summary: renderSummary(json, input.hunks.length),
-    inline: written.verdicts.map((verdict) => {
+    inline: written.verdicts.filter((verdict) => verdict.flagId !== PR_LEVEL_FLAG).map((verdict) => {
       const hunk = hunkOf(verdict.hunkId);
       const key = `${encodeURIComponent(hunk.path)}:${verdict.flagId}:${hunk.hash.slice(0, 16)}`;
       return { key, path: hunk.path, anchor: hunk.anchor, body: renderInline(verdict, key) };
@@ -147,12 +152,23 @@ export function buildReport(input: ReportInput): Report {
         findings.conclusion === "failure"
           ? `Blocked: ${[...new Set(gates.map((gate) => flagTitle(gate.flagId).toLowerCase()))].join(", ")}`
           : written.verdicts.length > 0
-            ? `${plural(written.verdicts.length, "finding")} to read first`
+            ? `${plural(new Set(written.verdicts.map((verdict) => verdict.hunkId)).size, "hunk")} to read first`
             : "Nothing flagged",
       summary: written.tldr ?? "No hunk needed a second look.",
     },
     json,
   };
+}
+
+// Policy ranks by attention before the writer has looked at anything. Here the verdicts are in:
+// a gate first, then hunks with a finding that survived, then the rest, each group by attention.
+function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): Findings["readingOrder"] {
+  const rank = (hunkId: string) => {
+    const own = verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    if (own.some((verdict) => verdict.kind === "gate")) return 0;
+    return own.length > 0 ? 1 : 2;
+  };
+  return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
 
 function renderSummary(json: ReportJson, hunkCount: number): string {
@@ -170,15 +186,36 @@ function renderSummary(json: ReportJson, hunkCount: number): string {
   }
 
   if (json.readingOrder.length > 0) {
+    const verdictsOf = (hunkId: string) => json.verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    const flagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length > 0);
+    const unflagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length === 0);
+    const listed = [...flagged.slice(0, MAX_FLAGGED_LISTED), ...unflagged.slice(0, MAX_UNFLAGGED_LISTED)];
+
     out.push("### Read in this order", "");
-    json.readingOrder.slice(0, MAX_READING_ORDER).forEach((entry, index) => {
-      const flags = json.verdicts.filter((verdict) => verdict.hunkId === entry.hunkId);
-      const why = flags.map((flag) => `**${flagTitle(flag.flagId)}** (${flag.severity}). ${flag.whatChanged}`);
+    listed.forEach((entry, index) => {
+      const why = verdictsOf(entry.hunkId).map((verdict) =>
+        verdict.flagId === PR_LEVEL_FLAG
+          ? "**Not in the description.**"
+          : `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`,
+      );
       out.push(`${index + 1}. \`${entry.path}\` ${lines(entry)}${why.length > 0 ? ` - ${why.join(" ")}` : ""}`);
     });
-    const rest = json.readingOrder.length - MAX_READING_ORDER;
+    const rest = json.readingOrder.length - listed.length;
     if (rest > 0) out.push("", `And ${plural(rest, "more hunk")}, in the JSON block of this comment.`);
     out.push("");
+  }
+
+  const undescribed = [...new Set(json.verdicts.filter((verdict) => verdict.flagId === PR_LEVEL_FLAG).map((verdict) => verdict.path))];
+  if (undescribed.length > 0) {
+    const shown = undescribed.slice(0, MAX_FILES_LISTED).map((path) => `\`${path}\``);
+    const more = undescribed.length > shown.length ? `, and ${undescribed.length - shown.length} more` : "";
+    out.push(
+      "### Not mentioned in the description",
+      "",
+      `Changes in ${plural(undescribed.length, "file")} are not covered by what the PR says it does: ${shown.join(", ")}${more}.`,
+      "Update the description, or move them to their own PR.",
+      "",
+    );
   }
 
   const { skipped } = json;

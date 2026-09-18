@@ -34,8 +34,17 @@ export async function runPipeline(input: PipelineInput): Promise<Report> {
     },
   );
   const findings = evaluate(hunks, judgement, description, policy);
+
+  const typesByFile = new Map<string, Set<string>>();
+  for (const hunk of judged) {
+    const type = judgement.hunks[hunk.id]?.code.change_type.choice;
+    if (type) typesByFile.set(hunk.path, (typesByFile.get(hunk.path) ?? new Set()).add(type));
+  }
+  const overview = [...typesByFile].map(([path, types]) => ({ path, changeTypes: [...types].sort() }));
+
   const written = await write({
     flags: findings.flags,
+    overview,
     hunks,
     title,
     description,

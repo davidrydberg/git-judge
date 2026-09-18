@@ -17,7 +17,7 @@ Then add `.github/workflows/git-judge.yml`:
 name: git-judge
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, synchronize, ready_for_review, edited]
 
 permissions:
   contents: read

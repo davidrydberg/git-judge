@@ -166,17 +166,43 @@ describe("summary comment", () => {
     expect(isSummaryComment("## git-judge looks nice")).toBe(false);
   });
 
-  test("a long reading order is cut in the comment but complete in the JSON", () => {
+  test("unflagged hunks are cut to a handful in the comment but complete in the JSON", () => {
     const many = Array.from({ length: 40 }, (_, index) => hunk(`src/file${index}.ts`, 1, 5));
     const report = buildReport({
       ...CLEAN,
       hunks: many,
       findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
     });
-    expect(report.summary).toContain("15. `src/file14.ts`");
-    expect(report.summary).not.toContain("16. `");
-    expect(report.summary).toContain("And 25 more hunks");
+    expect(report.summary).toContain("5. `src/file4.ts`");
+    expect(report.summary).not.toContain("6. `");
+    expect(report.summary).toContain("And 35 more hunks");
     expect(report.json.readingOrder).toHaveLength(40);
+  });
+
+  test("a hunk with a confirmed finding is read before an unflagged hunk with higher attention", () => {
+    const report = buildReport(
+      input(
+        findings({
+          readingOrder: [
+            { hunkId: "src/util/format.ts#0", attention: 3.1 },
+            { hunkId: "src/auth/session.ts#0", attention: 2.9 },
+            { hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 0.2 },
+          ],
+        }),
+        {
+          tldr: "x",
+          verdicts: [
+            verdict("src/auth/session.ts", "safety_check_weakened"),
+            verdict("db/migrations/007_drop_legacy.sql", "destructive_data", { kind: "gate" }),
+          ],
+        },
+      ),
+    );
+    expect(report.json.readingOrder.map((entry) => entry.path)).toEqual([
+      "db/migrations/007_drop_legacy.sql",
+      "src/auth/session.ts",
+      "src/util/format.ts",
+    ]);
   });
 });
 
@@ -206,6 +232,30 @@ describe("JSON block", () => {
 
   test("a comment without the block gives null", () => {
     expect(extractJson(buildDidNotRunReport("down", false).summary)).toBeNull();
+  });
+});
+
+describe("changes the description does not mention", () => {
+  const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
+  const report = buildReport(
+    input(findings({ readingOrder: paths.map((path) => ({ hunkId: `${path}#0`, attention: 1 })) }), {
+      tldr: "Renames things.",
+      verdicts: [
+        ...paths.map((path) => verdict(path, "unrelated_to_description")),
+        verdict("src/auth/session.ts", "safety_check_weakened"),
+      ],
+    }),
+  );
+
+  test("are reported once in the summary, with the files, not once per hunk", () => {
+    expect(report.summary).toMatchSnapshot();
+    expect(report.summary.match(/not covered by what the PR says/g)).toHaveLength(1);
+    expect(report.summary).toContain("Changes in 3 files");
+  });
+
+  test("never become inline comments, other findings on the same hunk still do", () => {
+    expect(report.inline.map((comment) => comment.key.split(":")[1])).toEqual(["safety_check_weakened"]);
+    expect(report.json.verdicts).toHaveLength(4);
   });
 });
 
@@ -244,7 +294,7 @@ describe("inline comments", () => {
 describe("check", () => {
   test.each([
     ["clean", CLEAN, "success", "Nothing flagged"],
-    ["warnings", WARNINGS, "success", "2 findings to read first"],
+    ["warnings", WARNINGS, "success", "2 hunks to read first"],
     ["gated", GATED, "failure", "Blocked: destructive data change"],
   ])("%s", (_name, reportInput, conclusion, title) => {
     expect(buildReport(reportInput).check).toMatchObject({ conclusion, title });

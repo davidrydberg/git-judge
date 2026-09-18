@@ -162,12 +162,20 @@ export function selectForJudging(hunks: Hunk[], policy: Policy): { judged: Hunk[
   return { judged: candidates.slice(0, policy.maxHunks), overCap: candidates.slice(policy.maxHunks) };
 }
 
+/** A hunk counts as a refactor only when Jev picks that type with enough confidence. */
+function claimsRefactor(answers: HunkAnswers, policy: Policy): boolean {
+  const type = answers.code.change_type;
+  return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
+}
+
 export function attention(answers: HunkAnswers, policy: Policy): number {
   const { code } = answers;
+  // Every feature and bugfix changes behaviour, and Jev says so at 0.95. Counted for all hunks it
+  // drowned out the other two signals, so it counts only where it is a finding: inside a refactor.
   const judgement = Math.max(
     code.test_loosened.noul,
     code.safety_check_weakened.noul,
-    code.refactor_changes_behaviour.noul,
+    claimsRefactor(answers, policy) ? code.refactor_changes_behaviour.noul : 0,
   );
   return (
     (1 - code.mechanical.noul) *
@@ -240,7 +248,7 @@ export function evaluate(
     }
     warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
     // Changing behaviour is only worth a warning when the hunk presents itself as a refactor.
-    if (code.change_type.choice === "refactor" && confident(code.change_type)) {
+    if (claimsRefactor(answers, policy)) {
       warn(
         "refactor_changes_behaviour",
         code.refactor_changes_behaviour.noul,

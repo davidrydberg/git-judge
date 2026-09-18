@@ -1,5 +1,34 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`changes the description does not mention > are reported once in the summary, with the files, not once per hunk 1`] = `
+"<!-- git-judge:summary -->
+## git-judge
+
+**TL;DR** Renames things.
+
+### Read in this order
+
+1. \`src/auth/session.ts\` L1-13 - **Not in the description.** **Safety check weakened** (medium). Something changed in src/auth/session.ts.
+2. \`test/invoice.test.ts\` L2-6 - **Not in the description.**
+3. \`src/util/format.ts\` L10 - **Not in the description.**
+
+### Not mentioned in the description
+
+Changes in 3 files are not covered by what the PR says it does: \`src/auth/session.ts\`, \`test/invoice.test.ts\`, \`src/util/format.ts\`.
+Update the description, or move them to their own PR.
+
+### Skip
+
+1 lockfile.
+
+---
+<sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+
+<!-- git-judge:json
+{"version":1,"conclusion":"success","tldr":"Renames things.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13},{"hunkId":"test/invoice.test.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6},{"hunkId":"src/util/format.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/util/format.ts.","whatToVerify":"Check src/util/format.ts before approving.","model":"gpt-5.6-luna","path":"src/util/format.ts","startLine":10,"endLine":10},{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":1,"path":"src/auth/session.ts","startLine":1,"endLine":13},{"hunkId":"test/invoice.test.ts#0","attention":1,"path":"test/invoice.test.ts","startLine":2,"endLine":6},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+-->"
+`;
+
 exports[`inline comments > one per verdict, anchored to the hunk 1`] = `
 "**Read first: Safety check weakened** (high)
 

@@ -46,9 +46,11 @@ function fakeJudge(overrides: Record<string, Record<string, number>> = {}) {
   return { client, seenFiles };
 }
 
+const tldrPrompts: string[] = [];
 const generator: Generator = {
   model: "gpt-5.6-luna",
   async generate(request) {
+    if (request.schemaName === "tldr") tldrPrompts.push(request.prompt);
     const value =
       request.schemaName === "tldr"
         ? { tldr: "Removes the token expiry check under the name of a refactor." }
@@ -88,7 +90,10 @@ test("a mixed PR: the auth change and the loosened test are read first, the rest
   expect(report.inline[0]).toMatchObject({ path: "src/auth/session.ts", anchor: { line: 1, side: "LEFT" } });
   expect(report.json.skipped).toEqual({ mechanical: 4, lockfile: 0, generated: 0, vendored: 1, overCap: 0 });
   expect(report.labels).toEqual(["area: auth", "size: S", "type: refactor"]);
-  expect(report.check).toMatchObject({ conclusion: "success", title: "3 findings to read first" });
+  expect(report.check).toMatchObject({ conclusion: "success", title: "2 hunks to read first" });
+  expect(tldrPrompts.at(-1)).toContain("- src/auth/session.ts: refactor");
+  expect(tldrPrompts.at(-1)).toContain("- test/invoice.test.ts: test");
+  expect(tldrPrompts.at(-1)).not.toContain("vendor/lib/index.js");
   expect(report.json.durationMs).toBe(3500);
   expect(seenFiles.has("vendor/lib/index.js")).toBe(false);
   expect(seenFiles.has("assets/logo.png")).toBe(false);
