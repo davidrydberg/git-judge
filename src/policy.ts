@@ -234,7 +234,10 @@ export function evaluate(
     const { code, mismatch, custom } = answers;
     const thresholds = policy.thresholds.warnings;
     warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
-    warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    // In a test file a weakened check is a loosened test, which is already its own flag.
+    if (!hunk.isTest) {
+      warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    }
     warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
     // Changing behaviour is only worth a warning when the hunk presents itself as a refactor.
     if (code.change_type.choice === "refactor" && confident(code.change_type)) {

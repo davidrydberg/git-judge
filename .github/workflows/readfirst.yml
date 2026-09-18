@@ -1,0 +1,21 @@
+# Runs readfirst on its own pull requests, from the PR's own checkout, so a PR tests its own dist/.
+# Fork PRs get no secrets under pull_request, and the action skips them.
+name: readfirst
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  readfirst:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}

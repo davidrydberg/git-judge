@@ -180,6 +180,16 @@ describe("summary comment", () => {
   });
 });
 
+test("a hunk that only removes lines shows no bogus line number", () => {
+  const removed = hunk("src/old.ts", 0, -1);
+  const report = buildReport({
+    ...CLEAN,
+    hunks: [removed],
+    findings: findings({ readingOrder: [{ hunkId: removed.id, attention: 1 }] }),
+  });
+  expect(report.summary).toContain("1. `src/old.ts` (lines removed)");
+});
+
 describe("JSON block", () => {
   test("round-trips and equals the action output", () => {
     const report = buildReport(WARNINGS);

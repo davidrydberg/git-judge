@@ -230,6 +230,20 @@ describe("warnings", () => {
   });
 });
 
+describe("test files", () => {
+  test("a weakened check in a test file is reported once, as a loosened test", () => {
+    const hunks = [hunk("spec", { isTest: true }), hunk("code")];
+    const spec = { testLoosened: 0.9, safety: 0.9 };
+    const judgement = {
+      hunks: { spec: answers(spec), code: answers(spec) },
+      pr: { description_quality: { score: 2 }, tests_cover_change: { noul: 1 } },
+    } as unknown as Judgement;
+    const findings = evaluate(hunks, judgement, DESCRIPTION, parsePolicy(""));
+
+    expect(flagIds(findings)).toEqual(["spec:test_loosened", "code:test_loosened", "code:safety_check_weakened"]);
+  });
+});
+
 describe("description", () => {
   test.each([
     ["empty", "", false],

@@ -95592,7 +95592,7 @@ function flagTitle(flagId) {
   return FLAG_TITLES[flagId] ?? `Custom check: ${flagId.replace(/^custom:/, "")}`;
 }
 function lines(hunk) {
-  if (hunk.endLine < hunk.startLine) return `L${hunk.startLine}`;
+  if (hunk.endLine < hunk.startLine) return "(lines removed)";
   return hunk.startLine === hunk.endLine ? `L${hunk.startLine}` : `L${hunk.startLine}-${hunk.endLine}`;
 }
 function prWarningText(warning2) {
@@ -96513,6 +96513,7 @@ var PR_QUESTIONS = {
 var GATES = ["secret_semantic", "destructive_data"];
 
 // src/judge.ts
+var REQUEST_OVERHEAD_TOKENS = 300;
 var STATE_AND_LONGEST_QUESTION_TOKENS = 32e3;
 var STATE_AND_ALL_QUESTIONS_TOKENS = 64e3;
 var CHARS_PER_TOKEN = 3;
@@ -96594,7 +96595,7 @@ function stateBudgetChars(questions) {
     STATE_AND_LONGEST_QUESTION_TOKENS - Math.max(...sizes),
     STATE_AND_ALL_QUESTIONS_TOKENS - sizes.reduce((sum, size) => sum + size, 0)
   );
-  return tokens * CHARS_PER_TOKEN;
+  return (tokens - REQUEST_OVERHEAD_TOKENS) * CHARS_PER_TOKEN;
 }
 function fitDiff(context3, diff, questions) {
   const budget = stateBudgetChars(questions) - JSON.stringify({ ...context3, diff: "" }).length;
@@ -97011,7 +97012,9 @@ function evaluate(hunks, judgement, description, policy) {
     const { code, mismatch, custom: custom2 } = answers;
     const thresholds = policy.thresholds.warnings;
     warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
-    warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    if (!hunk.isTest) {
+      warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
+    }
     warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
     if (code.change_type.choice === "refactor" && confident(code.change_type)) {
       warn(

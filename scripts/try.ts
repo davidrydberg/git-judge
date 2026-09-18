@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { createGenerator } from "../src/generators.js";
-import { createJudgeClient, estimateTokens, type JudgeClient } from "../src/judge.js";
+import { createJudgeClient, estimateTokens, REQUEST_OVERHEAD_TOKENS, type JudgeClient } from "../src/judge.js";
 import { runPipeline } from "../src/pipeline.js";
 import { parsePolicy } from "../src/policy.js";
 
@@ -20,7 +20,7 @@ const real = createJudgeClient(typesafeKey);
 const measuring: JudgeClient = {
   async systemOne(request) {
     const result = await real.systemOne(request);
-    estimated += estimateTokens(request.state) + estimateTokens(request.questions);
+    estimated += estimateTokens(request.state) + estimateTokens(request.questions) + REQUEST_OVERHEAD_TOKENS;
     actual += result.usage.input_tokens;
     return result;
   },

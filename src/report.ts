@@ -71,7 +71,7 @@ function flagTitle(flagId: string): string {
 }
 
 function lines(hunk: Pick<Hunk, "startLine" | "endLine">): string {
-  if (hunk.endLine < hunk.startLine) return `L${hunk.startLine}`;
+  if (hunk.endLine < hunk.startLine) return "(lines removed)";
   return hunk.startLine === hunk.endLine ? `L${hunk.startLine}` : `L${hunk.startLine}-${hunk.endLine}`;
 }
 
