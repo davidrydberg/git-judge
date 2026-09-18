@@ -18,8 +18,9 @@ export function subtotalCents(lines: OrderLine[]): number {
 export function orderTotalCents(lines: OrderLine[], discountPercent: number): number {
   const config = loadConfig();
   const subtotal = subtotalCents(lines);
-  const discounted = subtotal - subtotal * (discountPercent / 100);
-  return discounted + discounted * config.vatRate;
+  // Round after each step. A 33% discount on 999 cents used to give a total with a fraction of a cent.
+  const discounted = Math.round(subtotal - subtotal * (discountPercent / 100));
+  return Math.round(discounted + discounted * config.vatRate);
 }
 
 export function canRefund(user: User, amountCents: number): boolean {
