@@ -23,7 +23,6 @@ async function main(): Promise<void> {
     owner: context.repo.owner,
     repo: context.repo.repo,
     number: pull.number,
-    headSha: pull.head.sha,
     baseSha: pull.base.sha,
   });
 
@@ -46,6 +45,7 @@ async function main(): Promise<void> {
       generator: createGenerator(policy.generator.model, keys),
       escalationGenerator: escalation ? createGenerator(escalation.model, keys) : undefined,
       now: Date.now,
+      prUrl: pull.html_url,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -58,7 +58,6 @@ async function main(): Promise<void> {
   }
 
   await github.upsertSummary(report.summary);
-  await github.reconcileInline(report.inline);
   await github.syncLabels(report.labels);
   core.setOutput("conclusion", report.check.conclusion);
   core.setOutput("json", JSON.stringify(report.json));

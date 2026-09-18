@@ -77,7 +77,6 @@ function hunk(id: string, overrides: Partial<Hunk> = {}): Hunk {
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content: "",
-    hash: id,
     ...overrides,
   };
 }

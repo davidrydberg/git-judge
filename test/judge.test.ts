@@ -59,7 +59,6 @@ function hunk(id: string, overrides: Partial<Hunk> = {}): Hunk {
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content: "@@ -1,2 +1,2 @@\n-const fee = 1;\n+const fee = 0;",
-    hash: "h",
     ...overrides,
   };
 }

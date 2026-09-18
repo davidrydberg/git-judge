@@ -6,7 +6,6 @@ import {
   buildReport,
   costUsd,
   extractJson,
-  inlineKey,
   isSummaryComment,
   type ReportInput,
 } from "../src/report.js";
@@ -26,7 +25,6 @@ function hunk(path: string, startLine: number, endLine: number, overrides: Parti
     preClass: null,
     anchor: { line: startLine, side: "RIGHT" },
     content: "",
-    hash: `${"ab12".repeat(4)}${path.length}`.padEnd(64, "0"),
     ...overrides,
   };
 }
@@ -253,41 +251,46 @@ describe("changes the description does not mention", () => {
     expect(report.summary).toContain("Changes in 3 files");
   });
 
-  test("never become inline comments, other findings on the same hunk still do", () => {
-    expect(report.inline.map((comment) => comment.key.split(":")[1])).toEqual(["safety_check_weakened"]);
+  test("are not repeated as findings, other findings on the same hunk still are", () => {
+    expect(report.summary.match(/\*\*Verify:\*\*/g)).toHaveLength(1);
+    expect(report.summary).not.toContain("**Not mentioned in the description** (");
     expect(report.json.verdicts).toHaveLength(4);
   });
 });
 
-describe("inline comments", () => {
-  test("one per verdict, anchored to the hunk", () => {
-    const report = buildReport(WARNINGS);
-    expect(report.inline.map((comment) => [comment.path, comment.anchor])).toEqual([
-      ["src/auth/session.ts", { line: 1, side: "RIGHT" }],
-      ["test/invoice.test.ts", { line: 2, side: "RIGHT" }],
-    ]);
-    expect(report.inline[0]!.body).toMatchSnapshot();
+describe("one complete comment", () => {
+  test("every finding carries what changed and what to verify, in reading order", () => {
+    const { summary } = buildReport(WARNINGS);
+    const first = summary.indexOf("**Safety check weakened** (high) in `src/auth/session.ts` L1-13");
+    const second = summary.indexOf("**Test loosened** (medium) in `test/invoice.test.ts` L2-6");
+    expect(first).toBeGreaterThan(-1);
+    expect(second).toBeGreaterThan(first);
+    expect(summary).toContain(
+      "L1-13<br>\n  The expiry check on the token claims was removed.<br>\n  **Verify:** Confirm expired tokens are still rejected somewhere else.\n",
+    );
   });
 
-  test("the key is recoverable from the body and changes with file, flag, or hunk content", () => {
-    const [first, second] = buildReport(WARNINGS).inline;
-    expect(inlineKey(first!.body)).toBe(first!.key);
-    expect(first!.key).not.toBe(second!.key);
-    expect(inlineKey("A human comment")).toBeNull();
-
-    const edited = HUNKS.map((entry) => (entry.path === "src/auth/session.ts" ? { ...entry, hash: "f".repeat(64) } : entry));
-    expect(buildReport({ ...WARNINGS, hunks: edited }).inline[0]!.key).not.toBe(first!.key);
+  test("unflagged hunks follow under their own heading", () => {
+    const { summary } = buildReport(WARNINGS);
+    expect(summary).toContain("### Then read\n\n1. `src/util/format.ts` L10");
+    expect(buildReport(CLEAN).summary).toContain("### Read in this order\n\n1. `src/util/format.ts` L10");
   });
 
-  test("a path with spaces still gives a key without spaces", () => {
-    const spaced = hunk("docs/my notes/plan.md", 1, 2);
-    const report = buildReport({
-      ...CLEAN,
-      hunks: [spaced],
-      findings: findings(),
-      written: { verdicts: [verdict("docs/my notes/plan.md", "comment_drift")], tldr: "x", usage: {} },
-    });
-    expect(inlineKey(report.inline[0]!.body)).toBe(report.inline[0]!.key);
+  test("with the PR URL every location links to its first changed line in the diff", () => {
+    const moved = HUNKS.map((entry) =>
+      entry.path === "test/invoice.test.ts" ? { ...entry, anchor: { line: 5, side: "LEFT" as const } } : entry,
+    );
+    const { summary } = buildReport({ ...WARNINGS, hunks: moved, prUrl: "https://github.com/o/r/pull/7" });
+    // sha256("src/auth/session.ts") and sha256("test/invoice.test.ts")
+    expect(summary).toContain(
+      "[`src/auth/session.ts` L1-13](https://github.com/o/r/pull/7/files#diff-947e1ee9f63eea17",
+    );
+    expect(summary).toMatch(/\[`test\/invoice\.test\.ts` L2-6\]\(https:\/\/github\.com\/o\/r\/pull\/7\/files#diff-[0-9a-f]{64}L5\)/);
+    expect(summary).toMatch(/\[`src\/util\/format\.ts` L10\]\(.*#diff-[0-9a-f]{64}R10\)/);
+  });
+
+  test("the report has no inline comments to post", () => {
+    expect(Object.keys(buildReport(WARNINGS)).sort()).toEqual(["check", "json", "labels", "summary"]);
   });
 });
 

@@ -86,8 +86,7 @@ test("a mixed PR: the auth change and the loosened test are read first, the rest
     ["src/auth/session.ts", "refactor_changes_behaviour"],
     ["test/invoice.test.ts", "test_loosened"],
   ]);
-  expect(report.inline).toHaveLength(3);
-  expect(report.inline[0]).toMatchObject({ path: "src/auth/session.ts", anchor: { line: 1, side: "LEFT" } });
+  expect(report.json.verdicts[0]!.anchor).toEqual({ line: 1, side: "LEFT" });
   expect(report.json.skipped).toEqual({ mechanical: 4, lockfile: 0, generated: 0, vendored: 1, overCap: 0 });
   expect(report.labels).toEqual(["area: auth", "size: S", "type: refactor"]);
   expect(report.check).toMatchObject({ conclusion: "success", title: "3 findings to check" });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Anchor, Hunk } from "./diff.js";
 import type { Judgement } from "./judge.js";
 import type { Findings, PrWarning } from "./policy.js";
@@ -5,12 +6,11 @@ import type { Verdict, Written } from "./writer.js";
 
 export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
 const JSON_OPEN = "<!-- git-judge:json";
-const INLINE_MARKER = /<!-- git-judge:inline key=(\S+) -->/;
 const MAX_FLAGGED_LISTED = 15;
 const MAX_UNFLAGGED_LISTED = 5;
 const MAX_FILES_LISTED = 10;
-// A statement about the PR rather than about a line, so it is reported once in the summary
-// and never as an inline comment. One PR raised it on 18 hunks with the same sentence.
+// A statement about the PR rather than about a line, so it is reported once with its files
+// and not per hunk. One PR raised it on 18 hunks with the same sentence.
 const PR_LEVEL_FLAG = "unrelated_to_description";
 
 // US dollars per million tokens, input then output. A model missing here is left out of the cost.
@@ -27,19 +27,14 @@ export interface ReportInput {
   written: Written;
   judgement: Pick<Judgement, "model" | "inputTokens">;
   durationMs: number;
+  /** For example https://github.com/owner/repo/pull/12. With it, every location links to its line in the diff. */
+  prUrl?: string | undefined;
 }
 
-export interface InlineComment {
-  /** File, flag id, and hunk hash. An existing comment with the same key is still valid and is left alone. */
-  key: string;
-  path: string;
-  anchor: Anchor;
-  body: string;
-}
-
+// git-judge posts exactly one comment per PR and updates it in place. It posts no inline review
+// comments: each push would add a review to the timeline and a notification per comment.
 export interface Report {
   summary: string;
-  inline: InlineComment[];
   labels: string[];
   check: { conclusion: "success" | "failure"; title: string; summary: string };
   /** The same data as the hidden block in the summary, for the action output. */
@@ -50,8 +45,8 @@ export interface ReportJson {
   version: 1;
   conclusion: "success" | "failure";
   tldr: string | null;
-  verdicts: (Verdict & { path: string; startLine: number; endLine: number })[];
-  readingOrder: { hunkId: string; path: string; startLine: number; endLine: number; attention: number }[];
+  verdicts: (Verdict & Location)[];
+  readingOrder: ({ hunkId: string; attention: number } & Location)[];
   prWarnings: PrWarning[];
   skipped: Findings["skipped"];
   lowCoverage: string[];
@@ -59,6 +54,14 @@ export interface ReportJson {
   models: string[];
   costUsd: number | null;
   durationMs: number;
+}
+
+interface Location {
+  path: string;
+  startLine: number;
+  endLine: number;
+  /** First changed line, the target of the link into the diff. */
+  anchor: Anchor;
 }
 
 const FLAG_TITLES: Record<string, string> = {
@@ -120,14 +123,11 @@ export function buildReport(input: ReportInput): Report {
     version: 1,
     conclusion: findings.conclusion,
     tldr: written.tldr,
-    verdicts: written.verdicts.map((verdict) => {
-      const { path, startLine, endLine } = hunkOf(verdict.hunkId);
-      return { ...verdict, path, startLine, endLine };
-    }),
-    readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => {
-      const { path, startLine, endLine } = hunkOf(entry.hunkId);
-      return { ...entry, path, startLine, endLine };
-    }),
+    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
+    readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
+      ...entry,
+      ...locationOf(hunkOf(entry.hunkId)),
+    })),
     prWarnings: findings.prWarnings,
     skipped: findings.skipped,
     lowCoverage: findings.lowCoverage,
@@ -139,12 +139,7 @@ export function buildReport(input: ReportInput): Report {
 
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   return {
-    summary: renderSummary(json, input.hunks.length),
-    inline: written.verdicts.filter((verdict) => verdict.flagId !== PR_LEVEL_FLAG).map((verdict) => {
-      const hunk = hunkOf(verdict.hunkId);
-      const key = `${encodeURIComponent(hunk.path)}:${verdict.flagId}:${hunk.hash.slice(0, 16)}`;
-      return { key, path: hunk.path, anchor: hunk.anchor, body: renderInline(verdict, key) };
-    }),
+    summary: renderSummary(json, input.hunks.length, input.prUrl),
     labels: findings.labels,
     check: {
       conclusion: findings.conclusion,
@@ -160,6 +155,20 @@ export function buildReport(input: ReportInput): Report {
   };
 }
 
+function locationOf(hunk: Hunk): Location {
+  return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
+}
+
+/** "`path` L1-13", linked to the first changed line in the PR's Files tab when the PR URL is known. */
+function where(location: Location, prUrl: string | undefined): string {
+  const text = `\`${location.path}\` ${lines(location)}`;
+  if (!prUrl) return text;
+  // GitHub anchors a file in the diff view by the SHA-256 of its path, then the side and line.
+  const file = createHash("sha256").update(location.path).digest("hex");
+  const side = location.anchor.side === "LEFT" ? "L" : "R";
+  return `[${text}](${prUrl}/files#diff-${file}${side}${location.anchor.line})`;
+}
+
 // Policy ranks by attention before the writer has looked at anything. Here the verdicts are in:
 // a gate first, then hunks with a finding that survived, then the rest, each group by attention.
 function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): Findings["readingOrder"] {
@@ -172,36 +181,52 @@ function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): 
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
 
-function renderSummary(json: ReportJson, hunkCount: number): string {
+function renderSummary(json: ReportJson, hunkCount: number, prUrl: string | undefined): string {
   const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
 
+  // Markdown folds the lines of a list item into one paragraph, so the breaks are explicit.
+  const finding = (verdict: ReportJson["verdicts"][number], note?: string): string =>
+    [
+      `- **${flagTitle(verdict.flagId)}** (${verdict.severity}) in ${where(verdict, prUrl)}`,
+      verdict.whatChanged,
+      `**Verify:** ${verdict.whatToVerify}`,
+      ...(note ? [note] : []),
+    ].join("<br>\n  ");
+
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
-    out.push("### Blocking", "");
+    out.push("### Blocking", "", "The check fails until a human clears these.", "");
     for (const gate of gates) {
-      const disputed = gate.confirmed ? "" : " The writer model did not see this in the code, but a gate is cleared only by a human.";
-      out.push(`- **${flagTitle(gate.flagId)}** in \`${gate.path}\` ${lines(gate)}. ${gate.whatToVerify}${disputed}`);
+      const disputed = "The writer model did not see this in the code, but a gate is cleared only by a human.";
+      out.push(finding(gate, gate.confirmed ? undefined : disputed));
     }
     out.push("");
   }
 
-  if (json.readingOrder.length > 0) {
-    const verdictsOf = (hunkId: string) =>
-      json.verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
-    const flagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length > 0);
-    const unflagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length === 0);
-    const listed = [...flagged.slice(0, MAX_FLAGGED_LISTED), ...unflagged.slice(0, MAX_UNFLAGGED_LISTED)];
+  // Findings come in reading order, which already puts the most important hunk first.
+  const located = new Set(json.verdicts.filter((verdict) => verdict.flagId !== PR_LEVEL_FLAG).map((verdict) => verdict.hunkId));
+  const warnings = json.readingOrder.flatMap((entry) =>
+    json.verdicts.filter(
+      (verdict) => verdict.hunkId === entry.hunkId && verdict.kind === "warning" && verdict.flagId !== PR_LEVEL_FLAG,
+    ),
+  );
+  if (warnings.length > 0) {
+    out.push("### Read first", "");
+    for (const warning of warnings.slice(0, MAX_FLAGGED_LISTED)) out.push(finding(warning));
+    const rest = warnings.length - MAX_FLAGGED_LISTED;
+    if (rest > 0) out.push("", `And ${plural(rest, "more finding")}, in the JSON block of this comment.`);
+    out.push("");
+  }
 
-    out.push("### Read in this order", "");
-    listed.forEach((entry, index) => {
-      const why = verdictsOf(entry.hunkId).map(
-        (verdict) => `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`,
-      );
-      out.push(`${index + 1}. \`${entry.path}\` ${lines(entry)}${why.length > 0 ? ` - ${why.join(" ")}` : ""}`);
+  const unflagged = json.readingOrder.filter((entry) => !located.has(entry.hunkId));
+  if (unflagged.length > 0) {
+    out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
+    unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
+      out.push(`${index + 1}. ${where(entry, prUrl)}`);
     });
-    const rest = json.readingOrder.length - listed.length;
-    if (rest > 0) out.push("", `And ${plural(rest, "more hunk")}, in the JSON block of this comment.`);
+    const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
+    if (rest > 0) out.push("", `And ${plural(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
     out.push("");
   }
 
@@ -244,22 +269,9 @@ function renderSummary(json: ReportJson, hunkCount: number): string {
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
   out.push("---", `<sub>${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
 
-  // "-->" inside the JSON would end the HTML comment early. ">" is the same character to a JSON parser.
+  // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
   out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
-}
-
-function renderInline(verdict: Verdict, key: string): string {
-  const head = verdict.kind === "gate" ? "Blocking" : "Read first";
-  return [
-    `**${head}: ${flagTitle(verdict.flagId)}** (${verdict.severity})`,
-    "",
-    verdict.whatChanged,
-    "",
-    `**Verify:** ${verdict.whatToVerify}`,
-    "",
-    `<!-- git-judge:inline key=${key} -->`,
-  ].join("\n");
 }
 
 /** The summary posted when the judge or the generator could not be reached. */
@@ -284,11 +296,6 @@ export function buildDidNotRunReport(reason: string, failOnError: boolean): Pick
 
 export function isSummaryComment(body: string): boolean {
   return body.startsWith(SUMMARY_MARKER);
-}
-
-/** The reconciliation key of a git-judge inline comment, or null for anyone else's comment. */
-export function inlineKey(body: string): string | null {
-  return INLINE_MARKER.exec(body)?.[1] ?? null;
 }
 
 export function extractJson(summary: string): ReportJson | null {

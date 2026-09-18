@@ -128,24 +128,3 @@ describe("classification ignores hunk content", () => {
     expect(parseDiff(diff).hunks[0]!.preClass).toBeNull();
   });
 });
-
-describe("hash", () => {
-  const hunk = (start: number, body: string) =>
-    parseDiff(
-      [
-        "diff --git a/a.ts b/a.ts",
-        "--- a/a.ts",
-        "+++ b/a.ts",
-        `@@ -${start},2 +${start},2 @@`,
-        " const keep = 1;",
-        body,
-        "",
-      ].join("\n"),
-    ).hunks[0]!;
-
-  test("survives the hunk moving, changes when the change does", () => {
-    const original = hunk(10, "-a\n+b");
-    expect(hunk(40, "-a\n+b").hash).toBe(original.hash);
-    expect(hunk(10, "-a\n+c").hash).not.toBe(original.hash);
-  });
-});

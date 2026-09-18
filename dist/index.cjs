@@ -95569,9 +95569,9 @@ function anthropicGenerator(apiKey, model) {
 }
 
 // src/report.ts
+var import_node_crypto = require("node:crypto");
 var SUMMARY_MARKER = "<!-- git-judge:summary -->";
 var JSON_OPEN = "<!-- git-judge:json";
-var INLINE_MARKER = /<!-- git-judge:inline key=(\S+) -->/;
 var MAX_FLAGGED_LISTED = 15;
 var MAX_UNFLAGGED_LISTED = 5;
 var MAX_FILES_LISTED = 10;
@@ -95634,14 +95634,11 @@ function buildReport(input2) {
     version: 1,
     conclusion: findings.conclusion,
     tldr: written.tldr,
-    verdicts: written.verdicts.map((verdict) => {
-      const { path: path5, startLine, endLine } = hunkOf(verdict.hunkId);
-      return { ...verdict, path: path5, startLine, endLine };
-    }),
-    readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => {
-      const { path: path5, startLine, endLine } = hunkOf(entry.hunkId);
-      return { ...entry, path: path5, startLine, endLine };
-    }),
+    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
+    readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
+      ...entry,
+      ...locationOf(hunkOf(entry.hunkId))
+    })),
     prWarnings: findings.prWarnings,
     skipped: findings.skipped,
     lowCoverage: findings.lowCoverage,
@@ -95652,12 +95649,7 @@ function buildReport(input2) {
   };
   const gates = json2.verdicts.filter((verdict) => verdict.kind === "gate");
   return {
-    summary: renderSummary(json2, input2.hunks.length),
-    inline: written.verdicts.filter((verdict) => verdict.flagId !== PR_LEVEL_FLAG).map((verdict) => {
-      const hunk = hunkOf(verdict.hunkId);
-      const key = `${encodeURIComponent(hunk.path)}:${verdict.flagId}:${hunk.hash.slice(0, 16)}`;
-      return { key, path: hunk.path, anchor: hunk.anchor, body: renderInline(verdict, key) };
-    }),
+    summary: renderSummary(json2, input2.hunks.length, input2.prUrl),
     labels: findings.labels,
     check: {
       conclusion: findings.conclusion,
@@ -95667,6 +95659,16 @@ function buildReport(input2) {
     json: json2
   };
 }
+function locationOf(hunk) {
+  return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
+}
+function where(location, prUrl) {
+  const text = `\`${location.path}\` ${lines(location)}`;
+  if (!prUrl) return text;
+  const file2 = (0, import_node_crypto.createHash)("sha256").update(location.path).digest("hex");
+  const side = location.anchor.side === "LEFT" ? "L" : "R";
+  return `[${text}](${prUrl}/files#diff-${file2}${side}${location.anchor.line})`;
+}
 function orderForReading(order, verdicts) {
   const rank = (hunkId) => {
     const own2 = verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
@@ -95675,32 +95677,45 @@ function orderForReading(order, verdicts) {
   };
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
-function renderSummary(json2, hunkCount) {
+function renderSummary(json2, hunkCount, prUrl) {
   const out = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json2.tldr ? `**TL;DR** ${json2.tldr}` : "Nothing flagged.", "");
+  const finding = (verdict, note) => [
+    `- **${flagTitle(verdict.flagId)}** (${verdict.severity}) in ${where(verdict, prUrl)}`,
+    verdict.whatChanged,
+    `**Verify:** ${verdict.whatToVerify}`,
+    ...note ? [note] : []
+  ].join("<br>\n  ");
   const gates = json2.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
-    out.push("### Blocking", "");
+    out.push("### Blocking", "", "The check fails until a human clears these.", "");
     for (const gate of gates) {
-      const disputed = gate.confirmed ? "" : " The writer model did not see this in the code, but a gate is cleared only by a human.";
-      out.push(`- **${flagTitle(gate.flagId)}** in \`${gate.path}\` ${lines(gate)}. ${gate.whatToVerify}${disputed}`);
+      const disputed = "The writer model did not see this in the code, but a gate is cleared only by a human.";
+      out.push(finding(gate, gate.confirmed ? void 0 : disputed));
     }
     out.push("");
   }
-  if (json2.readingOrder.length > 0) {
-    const verdictsOf = (hunkId) => json2.verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
-    const flagged = json2.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length > 0);
-    const unflagged = json2.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length === 0);
-    const listed = [...flagged.slice(0, MAX_FLAGGED_LISTED), ...unflagged.slice(0, MAX_UNFLAGGED_LISTED)];
-    out.push("### Read in this order", "");
-    listed.forEach((entry, index) => {
-      const why = verdictsOf(entry.hunkId).map(
-        (verdict) => `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`
-      );
-      out.push(`${index + 1}. \`${entry.path}\` ${lines(entry)}${why.length > 0 ? ` - ${why.join(" ")}` : ""}`);
+  const located = new Set(json2.verdicts.filter((verdict) => verdict.flagId !== PR_LEVEL_FLAG).map((verdict) => verdict.hunkId));
+  const warnings = json2.readingOrder.flatMap(
+    (entry) => json2.verdicts.filter(
+      (verdict) => verdict.hunkId === entry.hunkId && verdict.kind === "warning" && verdict.flagId !== PR_LEVEL_FLAG
+    )
+  );
+  if (warnings.length > 0) {
+    out.push("### Read first", "");
+    for (const warning2 of warnings.slice(0, MAX_FLAGGED_LISTED)) out.push(finding(warning2));
+    const rest = warnings.length - MAX_FLAGGED_LISTED;
+    if (rest > 0) out.push("", `And ${plural2(rest, "more finding")}, in the JSON block of this comment.`);
+    out.push("");
+  }
+  const unflagged = json2.readingOrder.filter((entry) => !located.has(entry.hunkId));
+  if (unflagged.length > 0) {
+    out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
+    unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
+      out.push(`${index + 1}. ${where(entry, prUrl)}`);
     });
-    const rest = json2.readingOrder.length - listed.length;
-    if (rest > 0) out.push("", `And ${plural2(rest, "more hunk")}, in the JSON block of this comment.`);
+    const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
+    if (rest > 0) out.push("", `And ${plural2(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
     out.push("");
   }
   const undescribed = [...new Set(json2.verdicts.filter((verdict) => verdict.flagId === PR_LEVEL_FLAG).map((verdict) => verdict.path))];
@@ -95741,18 +95756,6 @@ function renderSummary(json2, hunkCount) {
   out.push("", JSON_OPEN, JSON.stringify(json2).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
 }
-function renderInline(verdict, key) {
-  const head = verdict.kind === "gate" ? "Blocking" : "Read first";
-  return [
-    `**${head}: ${flagTitle(verdict.flagId)}** (${verdict.severity})`,
-    "",
-    verdict.whatChanged,
-    "",
-    `**Verify:** ${verdict.whatToVerify}`,
-    "",
-    `<!-- git-judge:inline key=${key} -->`
-  ].join("\n");
-}
 function buildDidNotRunReport(reason, failOnError) {
   const conclusion = failOnError ? "failure" : "success";
   return {
@@ -95771,9 +95774,6 @@ function buildDidNotRunReport(reason, failOnError) {
 }
 function isSummaryComment(body) {
   return body.startsWith(SUMMARY_MARKER);
-}
-function inlineKey(body) {
-  return INLINE_MARKER.exec(body)?.[1] ?? null;
 }
 
 // src/github.ts
@@ -95818,36 +95818,6 @@ function createGitHub(token, pr) {
       } else {
         await octokit.rest.issues.createComment({ ...repo, issue_number: pr.number, body });
       }
-    },
-    async reconcileInline(comments) {
-      const wanted = new Map(comments.map((comment) => [comment.key, comment]));
-      const existing = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
-        ...repo,
-        pull_number: pr.number,
-        per_page: 100
-      });
-      for (const comment of existing) {
-        const key = inlineKey(comment.body);
-        if (key === null || comment.in_reply_to_id !== void 0) continue;
-        if (wanted.has(key)) {
-          wanted.delete(key);
-        } else {
-          await octokit.rest.pulls.deleteReviewComment({ ...repo, comment_id: comment.id });
-        }
-      }
-      if (wanted.size === 0) return;
-      await octokit.rest.pulls.createReview({
-        ...repo,
-        pull_number: pr.number,
-        commit_id: pr.headSha,
-        event: "COMMENT",
-        comments: [...wanted.values()].map((comment) => ({
-          path: comment.path,
-          line: comment.anchor.line,
-          side: comment.anchor.side,
-          body: comment.body
-        }))
-      });
     },
     async syncLabels(labels2) {
       const current = await octokit.paginate(octokit.rest.issues.listLabelsOnIssue, {
@@ -96668,7 +96638,6 @@ async function mapPool(items, limit3, fn) {
 }
 
 // src/diff.ts
-var import_node_crypto = require("node:crypto");
 var import_picomatch = __toESM(require_picomatch2(), 1);
 var LOCKFILES = /* @__PURE__ */ new Set([
   "package-lock.json",
@@ -96843,7 +96812,6 @@ function parseHunk(lines2, start, file2, ordinal) {
   let added = 0;
   let deleted = 0;
   let anchor2 = null;
-  const changed = [];
   let i = start + 1;
   for (; i < lines2.length; i++) {
     const line = lines2[i];
@@ -96854,13 +96822,11 @@ function parseHunk(lines2, start, file2, ordinal) {
       added++;
       newLine++;
       newRemaining--;
-      changed.push(line);
     } else if (line.startsWith("-")) {
       anchor2 ??= { line: oldLine, side: "LEFT" };
       deleted++;
       oldLine++;
       oldRemaining--;
-      changed.push(line);
     } else {
       oldLine++;
       newLine++;
@@ -96880,8 +96846,7 @@ function parseHunk(lines2, start, file2, ordinal) {
     size: added + deleted,
     preClass: file2.preClass,
     anchor: anchor2 ?? { line: newStart, side: "RIGHT" },
-    content: lines2.slice(start, i).join("\n"),
-    hash: (0, import_node_crypto.createHash)("sha256").update(changed.join("\n")).digest("hex")
+    content: lines2.slice(start, i).join("\n")
   };
   return { hunk, next: i };
 }
@@ -97278,7 +97243,7 @@ async function runPipeline(input2) {
     generator: input2.generator,
     escalationGenerator: input2.escalationGenerator
   });
-  return buildReport({ hunks, findings, written, judgement, durationMs: input2.now() - started });
+  return buildReport({ hunks, findings, written, judgement, durationMs: input2.now() - started, prUrl: input2.prUrl });
 }
 
 // src/action.ts
@@ -97296,7 +97261,6 @@ async function main() {
     owner: context2.repo.owner,
     repo: context2.repo.repo,
     number: pull.number,
-    headSha: pull.head.sha,
     baseSha: pull.base.sha
   });
   const policy = parsePolicy(await github.fetchPolicy());
@@ -97315,7 +97279,8 @@ async function main() {
       judgeClient: createJudgeClient(getInput("typesafe-api-key", { required: true })),
       generator: createGenerator(policy.generator.model, keys),
       escalationGenerator: escalation ? createGenerator(escalation.model, keys) : void 0,
-      now: Date.now
+      now: Date.now,
+      prUrl: pull.html_url
     });
   } catch (error63) {
     const reason = error63 instanceof Error ? error63.message : String(error63);
@@ -97327,7 +97292,6 @@ async function main() {
     return;
   }
   await github.upsertSummary(report.summary);
-  await github.reconcileInline(report.inline);
   await github.syncLabels(report.labels);
   setOutput("conclusion", report.check.conclusion);
   setOutput("json", JSON.stringify(report.json));

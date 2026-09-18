@@ -43,7 +43,6 @@ function hunk(path: string, content = `@@ -1 +1 @@\n-old ${path}\n+new ${path}`)
     preClass: null,
     anchor: { line: 1, side: "RIGHT" },
     content,
-    hash: path,
   };
 }
 

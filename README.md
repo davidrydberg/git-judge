@@ -2,7 +2,8 @@
 
 A GitHub Action that tells the reviewer where to look and when a PR's story does not match its diff.
 
-On every push to a PR it ranks each hunk by how much human attention it deserves, flags a small fixed set of things only judgement can catch, and posts one summary comment with a reading order.
+On every push to a PR it ranks each hunk by how much human attention it deserves, flags a small fixed set of things only judgement can catch, and posts one comment with the complete report: the findings, what to verify for each, and a reading order.
+The comment is updated in place on every push, and git-judge posts no inline comments.
 It does not find logic bugs and does not suggest code.
 
 Status: the whole pipeline is built and tested with fake clients.
