@@ -1,0 +1,83 @@
+diff --git a/assets/logo.png b/assets/logo.png
+index 2b379ce..f10ec9f 100644
+Binary files a/assets/logo.png and b/assets/logo.png differ
+diff --git a/docs/my notes/plan.md b/docs/my notes/plan.md
+index bfa6551..0ed60c7 100644
+--- a/docs/my notes/plan.md	
++++ b/docs/my notes/plan.md	
+@@ -1 +1,2 @@
+ notes
++more notes
+diff --git a/schema.sql b/schema.sql
+new file mode 100644
+index 0000000..59a2566
+--- /dev/null
++++ b/schema.sql
+@@ -0,0 +1 @@
++CREATE TABLE t (id int);
+diff --git a/src/auth/session.ts b/src/auth/session.ts
+index 22281de..8ba33a6 100644
+--- a/src/auth/session.ts
++++ b/src/auth/session.ts
+@@ -1,16 +1,13 @@
+-import { verify } from "./jwt";
+ import { db } from "../db";
++import { verify } from "./jwt";
+ 
+ export async function requireUser(token: string) {
+   if (!token) {
+     throw new Error("missing token");
+   }
+   const claims = verify(token);
+-  if (claims.exp < Date.now() / 1000) {
+-    throw new Error("expired token");
+-  }
+   const user = await db.users.find(claims.sub);
+-  if (!user || user.disabled) {
++  if (!user) {
+     throw new Error("unknown user");
+   }
+   return user;
+diff --git a/src/billing/invoice.ts b/src/billing/invoice.ts
+index c463641..a68a84c 100644
+--- a/src/billing/invoice.ts
++++ b/src/billing/invoice.ts
+@@ -10,4 +10,3 @@ export function format(amount: number) {
+   return amount.toFixed(2);
+ }
+ 
+--- not code, a line that starts with two dashes
+diff --git a/src/legacy.txt b/src/legacy.txt
+index 2802503..ca72676 100644
+--- a/src/legacy.txt
++++ b/src/legacy.txt
+@@ -1 +1 @@
+-no newline at end
+\ No newline at end of file
++no newline at end, changed
+\ No newline at end of file
+diff --git a/src/new_name.ts b/src/new_name.ts
+deleted file mode 100644
+index e94ac33..0000000
+--- a/src/new_name.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-export const helper = 1;
+diff --git a/test/invoice.test.ts b/test/invoice.test.ts
+index 4724107..0ba6652 100644
+--- a/test/invoice.test.ts
++++ b/test/invoice.test.ts
+@@ -2,5 +2,5 @@ import { expect, test } from "vitest";
+ import { total } from "../src/billing/invoice";
+ 
+ test("totals lines", () => {
+-  expect(total([{ price: 10, qty: 2 }, { price: 5, qty: 1 }])).toBe(25);
++  expect(total([{ price: 10, qty: 2 }, { price: 5, qty: 1 }])).toBeGreaterThan(0);
+ });
+diff --git a/vendor/lib/index.js b/vendor/lib/index.js
+index bd816ea..4bbffde 100644
+--- a/vendor/lib/index.js
++++ b/vendor/lib/index.js
+@@ -1 +1 @@
+-module.exports = 1;
++module.exports = 2;

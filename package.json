@@ -1,0 +1,33 @@
+{
+  "name": "readfirst",
+  "version": "0.0.0",
+  "description": "GitHub Action that tells the reviewer where to look and when a PR's story does not match its diff.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "@typesafe-ai/sdk": "^0.6.0",
+    "openai": "^7.18.0",
+    "picomatch": "^4.0.7",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.1",
+    "@types/picomatch": "^4.0.3",
+    "eslint": "^10.10.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.1"
+  }
+}
