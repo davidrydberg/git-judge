@@ -7,11 +7,11 @@ export interface OrderLine {
 }
 
 export function subtotalCents(lines: OrderLine[]): number {
-  let sum = 0;
-  for (const line of lines) {
-    sum += line.priceCents * line.quantity;
+  let total = 0;
+  for (const item of lines) {
+    total += item.priceCents * item.quantity;
   }
-  return sum;
+  return total;
 }
 
 // Applies a percentage discount and then VAT. All amounts are integer cents.
