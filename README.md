@@ -19,7 +19,7 @@ No inline comments and no review entries, so a PR with ten pushes still has one 
 | TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
 | Blocking | Gates that fail the check: a possible secret, a destructive data change |
 | Read first | Each confirmed finding, linked to its line in the Files tab, with what changed and what to verify |
-| Then read | The next five hunks by attention, linked |
+| Then read | The next five hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice, and any question that came close to a flag. Built from Jev's answers, no model writes it |
 | Not mentioned in the description | Files with changes the PR text does not cover |
 | Skip | How many hunks were mechanical, lockfile, generated, or vendored |
 | Notes | A weak or missing description, missing tests, a suggestion to split the PR |

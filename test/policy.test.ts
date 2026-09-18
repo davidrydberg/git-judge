@@ -164,6 +164,30 @@ describe("reading order", () => {
     expect(findings.skipped.mechanical).toBe(2);
   });
 
+  test("a score from half its threshold up to the threshold is a near miss, with no flag", () => {
+    const findings = run({ close: { safety: 0.44, testLoosened: 0.29, secret: 0.5 }, far: { safety: 0.1 } });
+    expect(findings.flags).toEqual([]);
+    const misses = Object.fromEntries(findings.readingOrder.map((entry) => [entry.hunkId, entry.nearMisses]));
+    expect(misses.close).toEqual([
+      { id: "secret_semantic", probability: 0.5, threshold: 0.9 },
+      { id: "safety_check_weakened", probability: 0.44, threshold: 0.6 },
+    ]);
+    expect(misses.far).toEqual([]);
+  });
+
+  test("a raised flag is not also a near miss, and the description flag never is one", () => {
+    const findings = run({ hit: { safety: 0.7, unrelated: 0.5 } });
+    expect(findings.flags.map((flag) => flag.id)).toEqual(["safety_check_weakened"]);
+    expect(findings.readingOrder[0]!.nearMisses).toEqual([]);
+  });
+
+  test("changing behaviour is a near miss only where it could be a flag, inside a refactor", () => {
+    expect(run({ feature: { behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([]);
+    expect(run({ tidy: { type: "refactor", behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([
+      { id: "refactor_changes_behaviour", probability: 0.5, threshold: 0.6 },
+    ]);
+  });
+
   test("the cutoff is inclusive, and zero keeps every hunk", () => {
     expect(run({ edge: { mechanical: 0.5 } }).readingOrder).toHaveLength(1);
     expect(run({ below: { mechanical: 0.51 } }).readingOrder).toHaveLength(0);

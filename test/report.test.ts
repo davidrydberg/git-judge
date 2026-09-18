@@ -110,7 +110,7 @@ function jevAnswers(nouls: Record<string, number>, options: { unrelated?: number
 
 const CLEAN = input(
   findings({
-    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1 }],
+    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] }],
     skipped: { mechanical: 3, lockfile: 1, generated: 0, vendored: 0, overCap: 0 },
   }),
   { usage: {} },
@@ -119,9 +119,9 @@ const CLEAN = input(
 const WARNINGS = input(
   findings({
     readingOrder: [
-      { hunkId: "src/auth/session.ts#0", attention: 4.8 },
-      { hunkId: "test/invoice.test.ts#0", attention: 2.4 },
-      { hunkId: "src/util/format.ts#0", attention: 1 },
+      { hunkId: "src/auth/session.ts#0", attention: 4.8, nearMisses: [] },
+      { hunkId: "test/invoice.test.ts#0", attention: 2.4, nearMisses: [] },
+      { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] },
     ],
     prWarnings: [
       { id: "weak_description", score: 0.4 },
@@ -146,7 +146,7 @@ const WARNINGS = input(
 const GATED = input(
   findings({
     conclusion: "failure",
-    readingOrder: [{ hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 4 }],
+    readingOrder: [{ hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 4, nearMisses: [] }],
     skipped: { mechanical: 0, lockfile: 1, generated: 0, vendored: 0, overCap: 0 },
   }),
   {
@@ -163,7 +163,7 @@ const GATED = input(
 
 const OVER_CAP = input(
   findings({
-    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1 }],
+    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] }],
     skipped: { mechanical: 0, lockfile: 1, generated: 0, vendored: 0, overCap: 140 },
     prWarnings: [{ id: "no_description" }],
   }),
@@ -197,7 +197,7 @@ describe("summary comment", () => {
     const report = buildReport({
       ...CLEAN,
       hunks: many,
-      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
+      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1, nearMisses: [] })) }),
     });
     expect(report.summary).toContain("5. `src/file4.ts`");
     expect(report.summary).not.toContain("6. `");
@@ -210,9 +210,9 @@ describe("summary comment", () => {
       input(
         findings({
           readingOrder: [
-            { hunkId: "src/util/format.ts#0", attention: 3.1 },
-            { hunkId: "src/auth/session.ts#0", attention: 2.9 },
-            { hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 0.2 },
+            { hunkId: "src/util/format.ts#0", attention: 3.1, nearMisses: [] },
+            { hunkId: "src/auth/session.ts#0", attention: 2.9, nearMisses: [] },
+            { hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 0.2, nearMisses: [] },
           ],
         }),
         {
@@ -237,7 +237,7 @@ test("a hunk that only removes lines shows no bogus line number", () => {
   const report = buildReport({
     ...CLEAN,
     hunks: [removed],
-    findings: findings({ readingOrder: [{ hunkId: removed.id, attention: 1 }] }),
+    findings: findings({ readingOrder: [{ hunkId: removed.id, attention: 1, nearMisses: [] }] }),
   });
   expect(report.summary).toContain("1. `src/old.ts` (lines removed)");
 });
@@ -312,7 +312,7 @@ describe("a report another agent can act on", () => {
 describe("changes the description does not mention", () => {
   const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
   const report = buildReport(
-    input(findings({ readingOrder: paths.map((path) => ({ hunkId: `${path}#0`, attention: 1 })) }), {
+    input(findings({ readingOrder: paths.map((path) => ({ hunkId: `${path}#0`, attention: 1, nearMisses: [] })) }), {
       tldr: "Renames things.",
       verdicts: [
         ...paths.map((path) => verdict(path, "unrelated_to_description")),
@@ -396,7 +396,7 @@ describe("Jev answers table", () => {
     const big = buildReport({
       ...CLEAN,
       hunks: many,
-      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
+      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1, nearMisses: [] })) }),
       judgement: { ...CLEAN.judgement, hunks: Object.fromEntries(many.map((entry) => [entry.id, jevAnswers({})])) },
       prUrl: "https://github.com/owner/repository/pull/123",
     });
@@ -418,6 +418,35 @@ describe("one complete comment", () => {
     expect(summary).toContain(
       "L1-13<br>\n  The expiry check on the token claims was removed.<br>\n  **Verify:** Confirm expired tokens are still rejected somewhere else.\n",
     );
+  });
+
+  test("an unflagged hunk says why it is on the list, from Jev's answers and what came close to a flag", () => {
+    const report = buildReport({
+      ...input(
+        findings({
+          readingOrder: [
+            {
+              hunkId: "src/auth/session.ts#0",
+              attention: 2,
+              nearMisses: [{ id: "safety_check_weakened", probability: 0.44, threshold: 0.6 }],
+            },
+            { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] },
+          ],
+        }),
+      ),
+      judgement: {
+        model: "jev-1.13.0",
+        inputTokens: 1000,
+        pr: PR_ANSWERS,
+        hunks: { "src/auth/session.ts#0": jevAnswers({}) },
+      },
+    });
+    const row = report.json.jev!.hunks["src/auth/session.ts#0"]!;
+    expect(report.summary).toContain(
+      `1. \`src/auth/session.ts\` L1-13 - ${row.changeType.choice}, touches auth, ${row.blastRadius.choice} would notice. Close to a flag: safety check weakened 0.44, flags at 0.6`,
+    );
+    // No Jev answers for this hunk, so there is nothing true to say about it.
+    expect(report.summary).toContain("2. `src/util/format.ts` L10\n");
   });
 
   test("unflagged hunks follow under their own heading", () => {

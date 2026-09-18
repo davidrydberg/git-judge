@@ -95769,6 +95769,25 @@ function where(location, prUrl) {
   const side = location.anchor.side === "LEFT" ? "L" : "R";
   return `[${text}](${prUrl}/files#diff-${file2}${side}${location.anchor.line})`;
 }
+var AREA_TEXT = {
+  auth: "auth",
+  payments: "payments",
+  data_migration: "data migration",
+  public_api: "public API"
+};
+function whyRead(entry, row) {
+  const parts = [];
+  if (row) {
+    parts.push(row.changeType.choice);
+    const area = AREA_TEXT[row.sensitiveArea.choice];
+    if (area) parts.push(`touches ${area}`);
+    if (row.blastRadius.choice !== "nobody") parts.push(`${row.blastRadius.choice} would notice`);
+  }
+  const close = entry.nearMisses.map(
+    (miss) => `${flagTitle(miss.id).toLowerCase()} ${miss.probability.toFixed(2)}, flags at ${miss.threshold}`
+  );
+  return [parts.join(", "), close.length > 0 ? `Close to a flag: ${close.join("; ")}` : ""].filter(Boolean).join(". ");
+}
 function orderForReading(order, verdicts) {
   const rank = (hunkId) => {
     const own2 = verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
@@ -95812,7 +95831,8 @@ function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) 
   if (unflagged.length > 0) {
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
-      out.push(`${index + 1}. ${where(entry, prUrl)}`);
+      const reason = whyRead(entry, tableData?.hunks[entry.hunkId]);
+      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
     if (rest > 0) out.push("", `And ${plural2(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
@@ -96779,7 +96799,10 @@ var GENERATED = [
   /_pb2(_grpc)?\.py$/,
   /\.g\.dart$/,
   /\.generated\.[^./]+$/,
-  /\.designer\.cs$/i
+  /\.designer\.cs$/i,
+  // Test snapshots. They quote the code they render, so Jev reads an auth path in one as auth code.
+  /(^|\/)__snapshots__\//,
+  /\.snap$/
 ];
 var TEST_PATHS = [
   /(^|\/)(tests?|__tests__|specs?|e2e)\//,
@@ -97087,6 +97110,7 @@ function expectedWeight(probabilities, weights) {
   return sum;
 }
 var SPLITTABLE_TYPES = /* @__PURE__ */ new Set(["feature", "bugfix", "refactor", "chore"]);
+var NEAR_MISS_SHARE = 0.5;
 function evaluate(hunks, judgement, description, policy) {
   const judged = hunks.flatMap((hunk) => {
     const answers = judgement.hunks[hunk.id];
@@ -97095,12 +97119,19 @@ function evaluate(hunks, judgement, description, policy) {
   const confident = (answer) => answer.confidence >= policy.thresholds.choiceConfidence;
   const flags = [];
   const gated = /* @__PURE__ */ new Set();
+  const nearMisses = /* @__PURE__ */ new Map();
+  const nearMiss = (hunkId, id, probability2, threshold) => {
+    if (probability2 < threshold * NEAR_MISS_SHARE) return;
+    nearMisses.set(hunkId, [...nearMisses.get(hunkId) ?? [], { id, probability: probability2, threshold }]);
+  };
   for (const { hunk, answers } of judged) {
     for (const id of GATES) {
       const probability2 = answers.code[id].noul;
       if (probability2 >= policy.thresholds.gates[id]) {
         flags.push({ hunkId: hunk.id, id, kind: "gate", probability: probability2, escalate: escalates(answers, policy) });
         gated.add(hunk.id);
+      } else {
+        nearMiss(hunk.id, id, probability2, policy.thresholds.gates[id]);
       }
     }
   }
@@ -97111,6 +97142,8 @@ function evaluate(hunks, judgement, description, policy) {
     const warn = (id, probability2, threshold) => {
       if (probability2 >= threshold) {
         flags.push({ hunkId: hunk.id, id, kind: "warning", probability: probability2, escalate: escalates(answers, policy) });
+      } else if (id !== "unrelated_to_description") {
+        nearMiss(hunk.id, id, probability2, threshold);
       }
     };
     const { code, mismatch, custom: custom2 } = answers;
@@ -97155,7 +97188,11 @@ function evaluate(hunks, judgement, description, policy) {
   return {
     flags,
     prWarnings,
-    readingOrder: reading.map((entry) => ({ hunkId: entry.hunk.id, attention: entry.attention })),
+    readingOrder: reading.map((entry) => ({
+      hunkId: entry.hunk.id,
+      attention: entry.attention,
+      nearMisses: nearMisses.get(entry.hunk.id) ?? []
+    })),
     skipped: {
       mechanical: judged.length - reading.length,
       lockfile: count("lockfile"),

@@ -54,7 +54,7 @@ export interface ReportJson {
   tldr: string | null;
   /** `id` survives a push that leaves the flagged lines alone, so a reader can tell a standing finding from a new one. */
   verdicts: (Verdict & Location & { id: string })[];
-  readingOrder: ({ hunkId: string; attention: number } & Location)[];
+  readingOrder: (Findings["readingOrder"][number] & Location)[];
   /** Every raw Jev answer, per judged hunk and for the PR. Dropped only if the comment would be too large. */
   jev: { hunks: Record<string, JevRow>; pr: { descriptionQuality: number; testsCoverChange: number } } | null;
   prWarnings: PrWarning[];
@@ -306,6 +306,28 @@ function where(location: Location, prUrl: string | undefined): string {
   return `[${text}](${prUrl}/files#diff-${file}${side}${location.anchor.line})`;
 }
 
+const AREA_TEXT: Record<string, string> = {
+  auth: "auth",
+  payments: "payments",
+  data_migration: "data migration",
+  public_api: "public API",
+};
+
+// Why an unflagged hunk is on the list, from answers Jev already gave. No model writes this.
+function whyRead(entry: ReportJson["readingOrder"][number], row: JevRow | undefined): string {
+  const parts: string[] = [];
+  if (row) {
+    parts.push(row.changeType.choice);
+    const area = AREA_TEXT[row.sensitiveArea.choice];
+    if (area) parts.push(`touches ${area}`);
+    if (row.blastRadius.choice !== "nobody") parts.push(`${row.blastRadius.choice} would notice`);
+  }
+  const close = entry.nearMisses.map(
+    (miss) => `${flagTitle(miss.id).toLowerCase()} ${miss.probability.toFixed(2)}, flags at ${miss.threshold}`,
+  );
+  return [parts.join(", "), close.length > 0 ? `Close to a flag: ${close.join("; ")}` : ""].filter(Boolean).join(". ");
+}
+
 // Policy ranks by attention before the writer has looked at anything. Here the verdicts are in:
 // a gate first, then hunks with a finding that survived, then the rest, each group by attention.
 function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): Findings["readingOrder"] {
@@ -366,7 +388,8 @@ function renderSummary(
   if (unflagged.length > 0) {
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
-      out.push(`${index + 1}. ${where(entry, prUrl)}`);
+      const reason = whyRead(entry, tableData?.hunks[entry.hunkId]);
+      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
     if (rest > 0) out.push("", `And ${plural(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
