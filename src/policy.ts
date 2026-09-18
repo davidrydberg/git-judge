@@ -111,10 +111,10 @@ export type Policy = z.infer<typeof policySchema>;
 /** Parses the policy file. An empty or missing file gives the defaults. Unknown keys are errors. */
 export function parsePolicy(yaml: string): Policy {
   const parsed = policySchema.safeParse(parseYaml(yaml) ?? {});
-  if (!parsed.success) throw new Error(`Invalid readfirst policy:\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new Error(`Invalid git-judge policy:\n${z.prettifyError(parsed.error)}`);
   const ids = parsed.data.customQuestions.map((question) => question.id);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicate) throw new Error(`Invalid readfirst policy:\ncustom question id "${duplicate}" is used twice`);
+  if (duplicate) throw new Error(`Invalid git-judge policy:\ncustom question id "${duplicate}" is used twice`);
   return parsed.data;
 }
 

@@ -1,9 +1,9 @@
 import { getOctokit } from "@actions/github";
 import { inlineKey, isSummaryComment, type InlineComment } from "./report.js";
 
-export const POLICY_PATH = ".readfirst.yml";
+export const POLICY_PATH = ".git-judge.yml";
 
-// Label prefixes readfirst owns. Labels with these prefixes are removed when they no longer apply.
+// Label prefixes git-judge owns. Labels with these prefixes are removed when they no longer apply.
 const MANAGED_LABEL = /^(area|size|type): /;
 
 export interface PullRequestRef {

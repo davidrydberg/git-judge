@@ -1,6 +1,6 @@
-# Runs readfirst on its own pull requests, from the PR's own checkout, so a PR tests its own dist/.
+# Runs git-judge on its own pull requests, from the PR's own checkout, so a PR tests its own dist/.
 # Fork PRs get no secrets under pull_request, and the action skips them.
-name: readfirst
+name: git-judge
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
@@ -11,7 +11,7 @@ permissions:
   issues: write
 
 jobs:
-  readfirst:
+  git-judge:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -95569,9 +95569,9 @@ function anthropicGenerator(apiKey, model) {
 }
 
 // src/report.ts
-var SUMMARY_MARKER = "<!-- readfirst:summary -->";
-var JSON_OPEN = "<!-- readfirst:json";
-var INLINE_MARKER = /<!-- readfirst:inline key=(\S+) -->/;
+var SUMMARY_MARKER = "<!-- git-judge:summary -->";
+var JSON_OPEN = "<!-- git-judge:json";
+var INLINE_MARKER = /<!-- git-judge:inline key=(\S+) -->/;
 var MAX_READING_ORDER = 15;
 var PRICES = {
   jev: [0.042, 0],
@@ -95665,7 +95665,7 @@ function buildReport(input2) {
   };
 }
 function renderSummary(json2, hunkCount) {
-  const out = [SUMMARY_MARKER, "## readfirst", ""];
+  const out = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json2.tldr ? `**TL;DR** ${json2.tldr}` : "Nothing flagged.", "");
   const gates = json2.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
@@ -95722,7 +95722,7 @@ function renderInline(verdict, key) {
     "",
     `**Verify:** ${verdict.whatToVerify}`,
     "",
-    `<!-- readfirst:inline key=${key} -->`
+    `<!-- git-judge:inline key=${key} -->`
   ].join("\n");
 }
 function buildDidNotRunReport(reason, failOnError) {
@@ -95730,15 +95730,15 @@ function buildDidNotRunReport(reason, failOnError) {
   return {
     summary: [
       SUMMARY_MARKER,
-      "## readfirst",
+      "## git-judge",
       "",
-      "**readfirst did not run on this push.** This PR has not been judged.",
+      "**git-judge did not run on this push.** This PR has not been judged.",
       "",
       `Reason: ${reason}`,
       "",
       failOnError ? "The check fails because the policy sets `failOnError`." : "The check passes so that an outage does not block the merge."
     ].join("\n"),
-    check: { conclusion, title: "readfirst did not run", summary: reason }
+    check: { conclusion, title: "git-judge did not run", summary: reason }
   };
 }
 function isSummaryComment(body) {
@@ -95749,7 +95749,7 @@ function inlineKey(body) {
 }
 
 // src/github.ts
-var POLICY_PATH = ".readfirst.yml";
+var POLICY_PATH = ".git-judge.yml";
 var MANAGED_LABEL = /^(area|size|type): /;
 function createGitHub(token, pr) {
   const octokit = getOctokit(token);
@@ -96953,11 +96953,11 @@ var policySchema = external_exports.strictObject({
 });
 function parsePolicy(yaml) {
   const parsed = policySchema.safeParse((0, import_yaml.parse)(yaml) ?? {});
-  if (!parsed.success) throw new Error(`Invalid readfirst policy:
+  if (!parsed.success) throw new Error(`Invalid git-judge policy:
 ${external_exports.prettifyError(parsed.error)}`);
   const ids = parsed.data.customQuestions.map((question) => question.id);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicate) throw new Error(`Invalid readfirst policy:
+  if (duplicate) throw new Error(`Invalid git-judge policy:
 custom question id "${duplicate}" is used twice`);
   return parsed.data;
 }
@@ -97235,11 +97235,11 @@ async function runPipeline(input2) {
 async function main() {
   const pull = context2.payload.pull_request;
   if (!pull) {
-    setFailed("readfirst only runs on pull_request events.");
+    setFailed("git-judge only runs on pull_request events.");
     return;
   }
   if (pull.head.repo?.full_name !== pull.base.repo.full_name) {
-    notice("readfirst does not run on pull requests from forks yet.");
+    notice("git-judge does not run on pull requests from forks yet.");
     return;
   }
   const github = createGitHub(getInput("github-token", { required: true }), {
@@ -97272,8 +97272,8 @@ async function main() {
     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
     await github.upsertSummary(didNotRun.summary);
     setOutput("conclusion", "did_not_run");
-    if (didNotRun.check.conclusion === "failure") setFailed(`readfirst did not run: ${reason}`);
-    else warning(`readfirst did not run: ${reason}`);
+    if (didNotRun.check.conclusion === "failure") setFailed(`git-judge did not run: ${reason}`);
+    else warning(`git-judge did not run: ${reason}`);
     return;
   }
   await github.upsertSummary(report.summary);

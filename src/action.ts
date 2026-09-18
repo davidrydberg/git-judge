@@ -10,12 +10,12 @@ import { buildDidNotRunReport } from "./report.js";
 async function main(): Promise<void> {
   const pull = context.payload.pull_request;
   if (!pull) {
-    core.setFailed("readfirst only runs on pull_request events.");
+    core.setFailed("git-judge only runs on pull_request events.");
     return;
   }
   // A fork PR gets no secrets under pull_request, and pull_request_target has not had its security review.
   if (pull.head.repo?.full_name !== pull.base.repo.full_name) {
-    core.notice("readfirst does not run on pull requests from forks yet.");
+    core.notice("git-judge does not run on pull requests from forks yet.");
     return;
   }
 
@@ -52,8 +52,8 @@ async function main(): Promise<void> {
     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
     await github.upsertSummary(didNotRun.summary);
     core.setOutput("conclusion", "did_not_run");
-    if (didNotRun.check.conclusion === "failure") core.setFailed(`readfirst did not run: ${reason}`);
-    else core.warning(`readfirst did not run: ${reason}`);
+    if (didNotRun.check.conclusion === "failure") core.setFailed(`git-judge did not run: ${reason}`);
+    else core.warning(`git-judge did not run: ${reason}`);
     return;
   }
 

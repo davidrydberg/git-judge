@@ -1,4 +1,4 @@
-// Every question readfirst asks TypeSafe's Jev model, grouped by the call it is sent in.
+// Every question git-judge asks TypeSafe's Jev model, grouped by the call it is sent in.
 // This file is meant to be read and edited without knowing the rest of the pipeline.
 //
 // Rules for wording, from the Jev documentation:

@@ -11,10 +11,10 @@ It has not yet run against the real TypeSafe, OpenAI, or GitHub APIs.
 ## Install it in a repo
 
 Add three repository secrets: `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` only if you configure escalation.
-Then add `.github/workflows/readfirst.yml`:
+Then add `.github/workflows/git-judge.yml`:
 
 ```yaml
-name: readfirst
+name: git-judge
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
@@ -25,7 +25,7 @@ permissions:
   issues: write
 
 jobs:
-  readfirst:
+  git-judge:
     runs-on: ubuntu-latest
     steps:
       - uses: davidrydberg/git-judge@main
@@ -38,9 +38,9 @@ Pull requests from forks are skipped.
 
 ## Policy
 
-Every threshold and weight lives in `.readfirst.yml` in the repo root.
+Every threshold and weight lives in `.git-judge.yml` in the repo root.
 The file is optional, and a missing file means the defaults.
-readfirst reads it from the base branch, so a PR cannot loosen the policy it is judged by.
+git-judge reads it from the base branch, so a PR cannot loosen the policy it is judged by.
 The schema with every default is at the top of [`src/policy.ts`](src/policy.ts).
 
 ```yaml

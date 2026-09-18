@@ -3,9 +3,9 @@ import type { Judgement } from "./judge.js";
 import type { Findings, PrWarning } from "./policy.js";
 import type { Verdict, Written } from "./writer.js";
 
-export const SUMMARY_MARKER = "<!-- readfirst:summary -->";
-const JSON_OPEN = "<!-- readfirst:json";
-const INLINE_MARKER = /<!-- readfirst:inline key=(\S+) -->/;
+export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
+const JSON_OPEN = "<!-- git-judge:json";
+const INLINE_MARKER = /<!-- git-judge:inline key=(\S+) -->/;
 const MAX_READING_ORDER = 15;
 
 // US dollars per million tokens, input then output. A model missing here is left out of the cost.
@@ -156,7 +156,7 @@ export function buildReport(input: ReportInput): Report {
 }
 
 function renderSummary(json: ReportJson, hunkCount: number): string {
-  const out: string[] = [SUMMARY_MARKER, "## readfirst", ""];
+  const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
 
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
@@ -221,7 +221,7 @@ function renderInline(verdict: Verdict, key: string): string {
     "",
     `**Verify:** ${verdict.whatToVerify}`,
     "",
-    `<!-- readfirst:inline key=${key} -->`,
+    `<!-- git-judge:inline key=${key} -->`,
   ].join("\n");
 }
 
@@ -231,9 +231,9 @@ export function buildDidNotRunReport(reason: string, failOnError: boolean): Pick
   return {
     summary: [
       SUMMARY_MARKER,
-      "## readfirst",
+      "## git-judge",
       "",
-      "**readfirst did not run on this push.** This PR has not been judged.",
+      "**git-judge did not run on this push.** This PR has not been judged.",
       "",
       `Reason: ${reason}`,
       "",
@@ -241,7 +241,7 @@ export function buildDidNotRunReport(reason: string, failOnError: boolean): Pick
         ? "The check fails because the policy sets `failOnError`."
         : "The check passes so that an outage does not block the merge.",
     ].join("\n"),
-    check: { conclusion, title: "readfirst did not run", summary: reason },
+    check: { conclusion, title: "git-judge did not run", summary: reason },
   };
 }
 
@@ -249,7 +249,7 @@ export function isSummaryComment(body: string): boolean {
   return body.startsWith(SUMMARY_MARKER);
 }
 
-/** The reconciliation key of a readfirst inline comment, or null for anyone else's comment. */
+/** The reconciliation key of a git-judge inline comment, or null for anyone else's comment. */
 export function inlineKey(body: string): string | null {
   return INLINE_MARKER.exec(body)?.[1] ?? null;
 }

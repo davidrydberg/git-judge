@@ -125,7 +125,7 @@ describe("policy file", () => {
     ["a custom question id with a colon", "customQuestions:\n  - id: 'a:b'\n    question: x"],
     ["a duplicate custom question id", "customQuestions:\n  - {id: a, question: x}\n  - {id: a, question: y}"],
   ])("%s is rejected", (_name, yaml) => {
-    expect(() => parsePolicy(yaml)).toThrow(/Invalid readfirst policy/);
+    expect(() => parsePolicy(yaml)).toThrow(/Invalid git-judge policy/);
   });
 });
 

@@ -153,7 +153,7 @@ describe("summary comment", () => {
     expect(buildReport(reportInput).summary).toMatchSnapshot();
   });
 
-  test("readfirst did not run", () => {
+  test("git-judge did not run", () => {
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", false)).toMatchSnapshot();
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", true).check.conclusion).toBe(
       "failure",
@@ -163,7 +163,7 @@ describe("summary comment", () => {
   test("starts with the marker used to find and update it", () => {
     expect(isSummaryComment(buildReport(CLEAN).summary)).toBe(true);
     expect(isSummaryComment(buildDidNotRunReport("down", false).summary)).toBe(true);
-    expect(isSummaryComment("## readfirst looks nice")).toBe(false);
+    expect(isSummaryComment("## git-judge looks nice")).toBe(false);
   });
 
   test("a long reading order is cut in the comment but complete in the JSON", () => {
@@ -199,7 +199,7 @@ describe("JSON block", () => {
   test("text that would close the HTML comment early is escaped and still round-trips", () => {
     const hostile = "Ends the comment --> <script>alert(1)</script>";
     const report = buildReport(input(findings(), { tldr: hostile, verdicts: [] }));
-    const block = report.summary.slice(report.summary.indexOf("<!-- readfirst:json"));
+    const block = report.summary.slice(report.summary.indexOf("<!-- git-judge:json"));
     expect(block.match(/-->/g)).toHaveLength(1);
     expect(extractJson(report.summary)!.tldr).toBe(hostile);
   });

@@ -40,7 +40,7 @@ const report = await runPipeline({
   now: Date.now,
 });
 
-console.log(report.summary.slice(0, report.summary.indexOf("<!-- readfirst:json")));
+console.log(report.summary.slice(0, report.summary.indexOf("<!-- git-judge:json")));
 console.log(`Check: ${report.check.conclusion} - ${report.check.title}`);
 console.log(`Labels: ${report.labels.join(", ")}`);
 console.log(`Jev tokens: estimated ${estimated}, actual ${actual} (estimate is ${(estimated / actual).toFixed(2)}x)`);
