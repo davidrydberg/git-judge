@@ -90,7 +90,7 @@ test("a mixed PR: the auth change and the loosened test are read first, the rest
   expect(report.inline[0]).toMatchObject({ path: "src/auth/session.ts", anchor: { line: 1, side: "LEFT" } });
   expect(report.json.skipped).toEqual({ mechanical: 4, lockfile: 0, generated: 0, vendored: 1, overCap: 0 });
   expect(report.labels).toEqual(["area: auth", "size: S", "type: refactor"]);
-  expect(report.check).toMatchObject({ conclusion: "success", title: "2 hunks to read first" });
+  expect(report.check).toMatchObject({ conclusion: "success", title: "3 findings to check" });
   expect(tldrPrompts.at(-1)).toContain("- src/auth/session.ts: refactor");
   expect(tldrPrompts.at(-1)).toContain("- test/invoice.test.ts: test");
   expect(tldrPrompts.at(-1)).not.toContain("vendor/lib/index.js");

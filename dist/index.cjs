@@ -95661,7 +95661,7 @@ function buildReport(input2) {
     labels: findings.labels,
     check: {
       conclusion: findings.conclusion,
-      title: findings.conclusion === "failure" ? `Blocked: ${[...new Set(gates.map((gate) => flagTitle(gate.flagId).toLowerCase()))].join(", ")}` : written.verdicts.length > 0 ? `${plural2(new Set(written.verdicts.map((verdict) => verdict.hunkId)).size, "hunk")} to read first` : "Nothing flagged",
+      title: findings.conclusion === "failure" ? `Blocked: ${[...new Set(gates.map((gate) => flagTitle(gate.flagId).toLowerCase()))].join(", ")}` : written.verdicts.length > 0 ? `${plural2(written.verdicts.length, "finding")} to check` : "Nothing flagged",
       summary: written.tldr ?? "No hunk needed a second look."
     },
     json: json2
@@ -95669,7 +95669,7 @@ function buildReport(input2) {
 }
 function orderForReading(order, verdicts) {
   const rank = (hunkId) => {
-    const own2 = verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    const own2 = verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
     if (own2.some((verdict) => verdict.kind === "gate")) return 0;
     return own2.length > 0 ? 1 : 2;
   };
@@ -95688,14 +95688,14 @@ function renderSummary(json2, hunkCount) {
     out.push("");
   }
   if (json2.readingOrder.length > 0) {
-    const verdictsOf = (hunkId) => json2.verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    const verdictsOf = (hunkId) => json2.verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
     const flagged = json2.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length > 0);
     const unflagged = json2.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length === 0);
     const listed = [...flagged.slice(0, MAX_FLAGGED_LISTED), ...unflagged.slice(0, MAX_UNFLAGGED_LISTED)];
     out.push("### Read in this order", "");
     listed.forEach((entry, index) => {
       const why = verdictsOf(entry.hunkId).map(
-        (verdict) => verdict.flagId === PR_LEVEL_FLAG ? "**Not in the description.**" : `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`
+        (verdict) => `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`
       );
       out.push(`${index + 1}. \`${entry.path}\` ${lines(entry)}${why.length > 0 ? ` - ${why.join(" ")}` : ""}`);
     });

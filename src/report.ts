@@ -152,7 +152,7 @@ export function buildReport(input: ReportInput): Report {
         findings.conclusion === "failure"
           ? `Blocked: ${[...new Set(gates.map((gate) => flagTitle(gate.flagId).toLowerCase()))].join(", ")}`
           : written.verdicts.length > 0
-            ? `${plural(new Set(written.verdicts.map((verdict) => verdict.hunkId)).size, "hunk")} to read first`
+            ? `${plural(written.verdicts.length, "finding")} to check`
             : "Nothing flagged",
       summary: written.tldr ?? "No hunk needed a second look.",
     },
@@ -164,7 +164,8 @@ export function buildReport(input: ReportInput): Report {
 // a gate first, then hunks with a finding that survived, then the rest, each group by attention.
 function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): Findings["readingOrder"] {
   const rank = (hunkId: string) => {
-    const own = verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    // The PR-level flag has its own section, so it does not make a hunk a finding to read first.
+    const own = verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
     if (own.some((verdict) => verdict.kind === "gate")) return 0;
     return own.length > 0 ? 1 : 2;
   };
@@ -186,17 +187,16 @@ function renderSummary(json: ReportJson, hunkCount: number): string {
   }
 
   if (json.readingOrder.length > 0) {
-    const verdictsOf = (hunkId: string) => json.verdicts.filter((verdict) => verdict.hunkId === hunkId);
+    const verdictsOf = (hunkId: string) =>
+      json.verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
     const flagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length > 0);
     const unflagged = json.readingOrder.filter((entry) => verdictsOf(entry.hunkId).length === 0);
     const listed = [...flagged.slice(0, MAX_FLAGGED_LISTED), ...unflagged.slice(0, MAX_UNFLAGGED_LISTED)];
 
     out.push("### Read in this order", "");
     listed.forEach((entry, index) => {
-      const why = verdictsOf(entry.hunkId).map((verdict) =>
-        verdict.flagId === PR_LEVEL_FLAG
-          ? "**Not in the description.**"
-          : `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`,
+      const why = verdictsOf(entry.hunkId).map(
+        (verdict) => `**${flagTitle(verdict.flagId)}** (${verdict.severity}). ${verdict.whatChanged}`,
       );
       out.push(`${index + 1}. \`${entry.path}\` ${lines(entry)}${why.length > 0 ? ` - ${why.join(" ")}` : ""}`);
     });

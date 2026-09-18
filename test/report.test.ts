@@ -294,7 +294,7 @@ describe("inline comments", () => {
 describe("check", () => {
   test.each([
     ["clean", CLEAN, "success", "Nothing flagged"],
-    ["warnings", WARNINGS, "success", "2 hunks to read first"],
+    ["warnings", WARNINGS, "success", "2 findings to check"],
     ["gated", GATED, "failure", "Blocked: destructive data change"],
   ])("%s", (_name, reportInput, conclusion, title) => {
     expect(buildReport(reportInput).check).toMatchObject({ conclusion, title });

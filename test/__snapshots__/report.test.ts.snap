@@ -8,9 +8,9 @@ exports[`changes the description does not mention > are reported once in the sum
 
 ### Read in this order
 
-1. \`src/auth/session.ts\` L1-13 - **Not in the description.** **Safety check weakened** (medium). Something changed in src/auth/session.ts.
-2. \`test/invoice.test.ts\` L2-6 - **Not in the description.**
-3. \`src/util/format.ts\` L10 - **Not in the description.**
+1. \`src/auth/session.ts\` L1-13 - **Safety check weakened** (medium). Something changed in src/auth/session.ts.
+2. \`test/invoice.test.ts\` L2-6
+3. \`src/util/format.ts\` L10
 
 ### Not mentioned in the description
 
