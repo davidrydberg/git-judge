@@ -199,10 +199,10 @@ export function buildReport(input: ReportInput): Report {
 
 function renderWithinLimit(json: ReportJson, input: ReportInput): string {
   const flagged = new Set(input.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
-  const full = renderSummary(json, input.hunks.length, input.prUrl, flagged);
+  const full = renderSummary(json, input.hunks, input.prUrl, flagged);
   if (full.length <= MAX_COMMENT_CHARS) return full;
   // The table keeps its row cap, so what grows without bound is the JSON. The raw answers go first.
-  return renderSummary({ ...json, jev: null }, input.hunks.length, input.prUrl, flagged, json.jev);
+  return renderSummary({ ...json, jev: null }, input.hunks, input.prUrl, flagged, json.jev);
 }
 
 function jevRow(hunk: Hunk, answers: HunkAnswers): JevRow {
@@ -292,6 +292,19 @@ function findingId(flagId: string, hunk: Hunk): string {
   return createHash("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
 }
 
+const MAX_SNIPPET_LINES = 8;
+const MAX_SNIPPET_LINE_CHARS = 200;
+
+// A diff block inside a list item. The lines are author-controlled, so the fence is made longer
+// than any run of backticks in them and nothing inside it can close the block.
+function snippet(lines: string[], indent = "  "): string {
+  const shown = lines.slice(0, MAX_SNIPPET_LINES).map((line) => line.slice(0, MAX_SNIPPET_LINE_CHARS));
+  if (lines.length > shown.length) shown.push(`  ... ${plural(lines.length - shown.length, "more changed line")}`);
+  const longest = Math.max(2, ...shown.flatMap((line) => (line.match(/`+/g) ?? []).map((run) => run.length)));
+  const fence = "`".repeat(longest + 1);
+  return ["", "", `${fence}diff`, ...shown, fence].map((line) => (line ? indent + line : "")).join("\n");
+}
+
 function locationOf(hunk: Hunk): Location {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
 }
@@ -328,6 +341,17 @@ function whyRead(entry: ReportJson["readingOrder"][number], row: JevRow | undefi
   return [parts.join(", "), close.length > 0 ? `Close to a flag: ${close.join("; ")}` : ""].filter(Boolean).join(". ");
 }
 
+// A near miss has no model to point at lines, so the hunk's own changed lines are shown, cut short.
+// Never for a possible secret: the comment would keep it after a force-push removed it from the branch.
+function closeCall(entry: ReportJson["readingOrder"][number], hunks: Hunk[]): string {
+  if (entry.nearMisses.length === 0 || entry.nearMisses.some((miss) => miss.id === "secret_semantic")) return "";
+  const changed = hunks
+    .find((hunk) => hunk.id === entry.hunkId)
+    ?.content.split("\n")
+    .filter((line) => /^[+-]/.test(line));
+  return changed && changed.length > 0 ? snippet(changed, "   ") : "";
+}
+
 // Policy ranks by attention before the writer has looked at anything. Here the verdicts are in:
 // a gate first, then hunks with a finding that survived, then the rest, each group by attention.
 function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): Findings["readingOrder"] {
@@ -342,7 +366,7 @@ function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): 
 
 function renderSummary(
   json: ReportJson,
-  hunkCount: number,
+  hunks: Hunk[],
   prUrl: string | undefined,
   flagged: Set<string>,
   tableData: ReportJson["jev"] = json.jev,
@@ -357,7 +381,7 @@ function renderSummary(
       verdict.whatChanged,
       `**Verify:** ${verdict.whatToVerify}`,
       ...(note ? [note] : []),
-    ].join("<br>\n  ");
+    ].join("<br>\n  ") + (verdict.evidence.length > 0 ? snippet(verdict.evidence) : "");
 
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
@@ -389,7 +413,7 @@ function renderSummary(
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
       const reason = whyRead(entry, tableData?.hunks[entry.hunkId]);
-      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}`);
+      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}${closeCall(entry, hunks)}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
     if (rest > 0) out.push("", `And ${plural(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
@@ -436,7 +460,7 @@ function renderSummary(
 
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
   const commit = json.headSha ? `judged at ${json.headSha.slice(0, 7)} | ` : "";
-  out.push("---", `<sub>${commit}${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
+  out.push("---", `<sub>${commit}${plural(hunks.length, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
 
   // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
   out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");

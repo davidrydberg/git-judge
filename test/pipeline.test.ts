@@ -54,7 +54,7 @@ const generator: Generator = {
     const value =
       request.schemaName === "tldr"
         ? { tldr: "Removes the token expiry check under the name of a refactor." }
-        : { confirmed: true, severity: "high", what_changed: "A check was removed.", what_to_verify: "Confirm it is enforced elsewhere." };
+        : { confirmed: true, severity: "high", what_changed: "A check was removed.", what_to_verify: "Confirm it is enforced elsewhere.", evidence: [] };
     return { value: request.schema.parse(value), inputTokens: 300, outputTokens: 40 };
   },
 };

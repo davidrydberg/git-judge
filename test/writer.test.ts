@@ -3,7 +3,7 @@ import type { Hunk } from "../src/diff.js";
 import { parsePolicy, type Flag } from "../src/policy.js";
 import { write, type GenerateRequest, type Generator, type WriterInput } from "../src/writer.js";
 
-type Reply = { confirmed: boolean; severity?: "low" | "medium" | "high" };
+type Reply = { confirmed: boolean; severity?: "low" | "medium" | "high"; evidence?: string[] };
 
 /** Answers a verdict request by looking up the hunk's file in `replies`. Records every request. */
 function fakeGenerator(model: string, replies: Record<string, Reply> = {}) {
@@ -22,6 +22,7 @@ function fakeGenerator(model: string, replies: Record<string, Reply> = {}) {
         severity: reply.severity ?? "medium",
         what_changed: `Changed ${file}.`,
         what_to_verify: `Verify ${file}.`,
+        evidence: reply.evidence ?? [],
       });
       return { value, inputTokens: 100, outputTokens: 20 };
     },
@@ -83,9 +84,30 @@ describe("verdicts", () => {
         severity: "high",
         whatChanged: "Changed src/auth.ts.",
         whatToVerify: "Verify src/auth.ts.",
+        evidence: [],
         model: "gpt-5.6-luna",
       },
     ]);
+  });
+
+  test("evidence is the hunk's own changed lines, in diff order, and a line the hunk does not have is dropped", async () => {
+    const content = "@@ -1,3 +1,2 @@\n context line\n-  if (expired(token)) throw new Error();\n+  return token;";
+    const { generator } = fakeGenerator("gpt-5.6-luna", {
+      "src/auth.ts": {
+        confirmed: true,
+        // Out of order, one without its sign, one context line, one the model made up.
+        evidence: ["+  return token;", "if (expired(token)) throw new Error();", " context line", "+ deleteAllUsers();"],
+      },
+    });
+    const flags = [flag("src/auth.ts", "safety_check_weakened")];
+    const { verdicts } = await write(input(flags, generator, { hunks: [hunk("src/auth.ts", content)] }));
+    expect(verdicts[0]!.evidence).toEqual(["-  if (expired(token)) throw new Error();", "+  return token;"]);
+  });
+
+  test("a possible secret is never quoted", async () => {
+    const { generator } = fakeGenerator("gpt-5.6-luna");
+    const { verdicts } = await write(input([flag("src/config.ts", "secret_semantic")], generator));
+    expect(verdicts[0]!.evidence).toEqual([]);
   });
 
   test("a rejected warning is dropped entirely", async () => {
@@ -144,12 +166,12 @@ describe("what the generator is shown", () => {
     expect(requests[0]!.prompt).toContain(expected);
   });
 
-  test("the output shape has one slot, with no room for extra findings", async () => {
+  test("the output shape has one slot, and its only list is checked against the hunk", async () => {
     const { generator, requests } = fakeGenerator("gpt-5.6-luna");
     await write(input([flag("src/a.ts", "comment_drift")], generator));
 
     const shape = (requests[0]!.schema as unknown as { shape: Record<string, unknown> }).shape;
-    expect(Object.keys(shape)).toEqual(["confirmed", "severity", "what_changed", "what_to_verify"]);
+    expect(Object.keys(shape)).toEqual(["confirmed", "severity", "what_changed", "what_to_verify", "evidence"]);
   });
 
   test("the TL;DR call gets the title and confirmed verdicts, never the diff or rejected flags", async () => {

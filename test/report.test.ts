@@ -48,6 +48,7 @@ function verdict(path: string, flagId: Verdict["flagId"], overrides: Partial<Ver
     severity: "medium",
     whatChanged: `Something changed in ${path}.`,
     whatToVerify: `Check ${path} before approving.`,
+    evidence: [],
     model: "gpt-5.6-luna",
     ...overrides,
   };
@@ -447,6 +448,41 @@ describe("one complete comment", () => {
     );
     // No Jev answers for this hunk, so there is nothing true to say about it.
     expect(report.summary).toContain("2. `src/util/format.ts` L10\n");
+  });
+
+  test("a finding shows its evidence as a diff block that the quoted code cannot close", () => {
+    const evidence = ["-  if (expired(token)) throw new Error();", "+  const note = `a ``` fence`;"];
+    const report = buildReport(
+      input(findings({ readingOrder: [{ hunkId: "src/auth/session.ts#0", attention: 2, nearMisses: [] }] }), {
+        verdicts: [verdict("src/auth/session.ts", "safety_check_weakened", { evidence })],
+      }),
+    );
+    expect(report.summary).toContain(
+      ["**Verify:** Check src/auth/session.ts before approving.", "", "  ````diff", `  ${evidence[0]}`, `  ${evidence[1]}`, "  ````"].join("\n"),
+    );
+    expect(report.json.verdicts[0]!.evidence).toEqual(evidence);
+  });
+
+  test("a near miss shows the hunk's changed lines, cut short, and never for a possible secret", () => {
+    const changed = Array.from({ length: 10 }, (_, index) => `+line ${index}`);
+    const hunks = [hunk("src/util/format.ts", 10, 20, { content: ["@@ -1 +1,10 @@", " context", ...changed].join("\n") })];
+    const render = (id: "safety_check_weakened" | "secret_semantic") =>
+      buildReport({
+        ...input(
+          findings({
+            readingOrder: [
+              { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [{ id, probability: 0.5, threshold: 0.9 }] },
+            ],
+          }),
+        ),
+        hunks,
+      }).summary;
+
+    const shown = render("safety_check_weakened");
+    expect(shown).toContain(["   ```diff", "   +line 0"].join("\n"));
+    expect(shown).toContain(["   +line 7", "     ... 2 more changed lines", "   ```"].join("\n"));
+    expect(shown).not.toContain(" context");
+    expect(render("secret_semantic")).not.toContain("+line 0");
   });
 
   test("unflagged hunks follow under their own heading", () => {

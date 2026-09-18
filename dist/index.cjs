@@ -95683,9 +95683,9 @@ function buildReport(input2) {
 }
 function renderWithinLimit(json2, input2) {
   const flagged = new Set(input2.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
-  const full = renderSummary(json2, input2.hunks.length, input2.prUrl, flagged);
+  const full = renderSummary(json2, input2.hunks, input2.prUrl, flagged);
   if (full.length <= MAX_COMMENT_CHARS) return full;
-  return renderSummary({ ...json2, jev: null }, input2.hunks.length, input2.prUrl, flagged, json2.jev);
+  return renderSummary({ ...json2, jev: null }, input2.hunks, input2.prUrl, flagged, json2.jev);
 }
 function jevRow(hunk, answers) {
   const { code, mismatch, custom: custom2 } = answers;
@@ -95759,6 +95759,15 @@ function findingId(flagId, hunk) {
   const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
   return (0, import_node_crypto.createHash)("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
 }
+var MAX_SNIPPET_LINES = 8;
+var MAX_SNIPPET_LINE_CHARS = 200;
+function snippet(lines2, indent = "  ") {
+  const shown = lines2.slice(0, MAX_SNIPPET_LINES).map((line) => line.slice(0, MAX_SNIPPET_LINE_CHARS));
+  if (lines2.length > shown.length) shown.push(`  ... ${plural2(lines2.length - shown.length, "more changed line")}`);
+  const longest = Math.max(2, ...shown.flatMap((line) => (line.match(/`+/g) ?? []).map((run) => run.length)));
+  const fence = "`".repeat(longest + 1);
+  return ["", "", `${fence}diff`, ...shown, fence].map((line) => line ? indent + line : "").join("\n");
+}
 function locationOf(hunk) {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
 }
@@ -95788,6 +95797,11 @@ function whyRead(entry, row) {
   );
   return [parts.join(", "), close.length > 0 ? `Close to a flag: ${close.join("; ")}` : ""].filter(Boolean).join(". ");
 }
+function closeCall(entry, hunks) {
+  if (entry.nearMisses.length === 0 || entry.nearMisses.some((miss) => miss.id === "secret_semantic")) return "";
+  const changed = hunks.find((hunk) => hunk.id === entry.hunkId)?.content.split("\n").filter((line) => /^[+-]/.test(line));
+  return changed && changed.length > 0 ? snippet(changed, "   ") : "";
+}
 function orderForReading(order, verdicts) {
   const rank = (hunkId) => {
     const own2 = verdicts.filter((verdict) => verdict.hunkId === hunkId && verdict.flagId !== PR_LEVEL_FLAG);
@@ -95796,7 +95810,7 @@ function orderForReading(order, verdicts) {
   };
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
-function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) {
+function renderSummary(json2, hunks, prUrl, flagged, tableData = json2.jev) {
   const out = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json2.tldr ? `**TL;DR** ${json2.tldr}` : "Nothing flagged.", "");
   const finding = (verdict, note) => [
@@ -95804,7 +95818,7 @@ function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) 
     verdict.whatChanged,
     `**Verify:** ${verdict.whatToVerify}`,
     ...note ? [note] : []
-  ].join("<br>\n  ");
+  ].join("<br>\n  ") + (verdict.evidence.length > 0 ? snippet(verdict.evidence) : "");
   const gates = json2.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
     out.push("### Blocking", "", "The check fails until a human clears these.", "");
@@ -95832,7 +95846,7 @@ function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) 
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
       const reason = whyRead(entry, tableData?.hunks[entry.hunkId]);
-      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}`);
+      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}${closeCall(entry, hunks)}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
     if (rest > 0) out.push("", `And ${plural2(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
@@ -95874,7 +95888,7 @@ function renderSummary(json2, hunkCount, prUrl, flagged, tableData = json2.jev) 
   if (tableData) out.push(...renderJevTable(json2, tableData, prUrl, flagged));
   const cost = json2.costUsd === null ? "cost unknown" : `about $${json2.costUsd.toFixed(4)}`;
   const commit = json2.headSha ? `judged at ${json2.headSha.slice(0, 7)} | ` : "";
-  out.push("---", `<sub>${commit}${plural2(hunkCount, "hunk")} | ${(json2.durationMs / 1e3).toFixed(1)} s | ${cost} | ${json2.models.join(", ")}</sub>`);
+  out.push("---", `<sub>${commit}${plural2(hunks.length, "hunk")} | ${(json2.durationMs / 1e3).toFixed(1)} s | ${cost} | ${json2.models.join(", ")}</sub>`);
   out.push("", JSON_OPEN, JSON.stringify(json2).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
 }
@@ -97236,7 +97250,8 @@ var verdictSchema = external_exports.object({
   confirmed: external_exports.boolean().describe("True if the code shows what the claim says. False if the claim is wrong."),
   severity: external_exports.enum(["low", "medium", "high"]),
   what_changed: external_exports.string().describe("One sentence on what this chunk changes, relevant to the claim."),
-  what_to_verify: external_exports.string().describe("One sentence telling the reviewer what to check before approving.")
+  what_to_verify: external_exports.string().describe("One sentence telling the reviewer what to check before approving."),
+  evidence: external_exports.array(external_exports.string()).describe("The few added or removed lines that show the claim, copied exactly from the diff with their leading + or -. Empty if the claim is wrong.")
 });
 var tldrSchema = external_exports.object({
   tldr: external_exports.string().describe("At most two sentences on what this pull request really does.")
@@ -97278,6 +97293,8 @@ async function write(input2) {
           severity: "high",
           whatChanged: "The added lines look like they contain a credential, key, or token.",
           whatToVerify: "Check the added lines, and if it is a real secret, rotate it and remove it from the branch history.",
+          // Quoting it would copy the secret into a comment that outlives a force-push.
+          evidence: [],
           model: null
         };
       }
@@ -97296,6 +97313,7 @@ async function write(input2) {
         severity: verdict.severity,
         whatChanged: verdict.what_changed,
         whatToVerify: verdict.what_to_verify,
+        evidence: quoted(verdict.evidence, hunk),
         model: generator.model
       };
     })
@@ -97312,6 +97330,12 @@ async function write(input2) {
     tldr = result.tldr;
   }
   return { verdicts, tldr, usage };
+}
+var MAX_EVIDENCE_LINES = 6;
+function quoted(evidence, hunk) {
+  const bare = (line) => line.replace(/^[+-]/, "").trim();
+  const wanted = new Set(evidence.map(bare).filter(Boolean));
+  return hunk.content.split("\n").filter((line) => /^[+-]/.test(line) && wanted.has(bare(line))).slice(0, MAX_EVIDENCE_LINES);
 }
 function claimFor(flag, policy) {
   if (flag.id.startsWith("custom:")) {

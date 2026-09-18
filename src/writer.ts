@@ -16,13 +16,16 @@ export interface Generator {
   generate<T>(request: GenerateRequest<T>): Promise<{ value: T; inputTokens: number; outputTokens: number }>;
 }
 
-// One object for one flag. The shape has no list and no free-form field,
-// so the generator has nowhere to put a finding of its own.
+// One object for one flag. The shape has no free-form field, so the generator has nowhere to put
+// a finding of its own. `evidence` is a list, but only lines found in the hunk survive it.
 const verdictSchema = z.object({
   confirmed: z.boolean().describe("True if the code shows what the claim says. False if the claim is wrong."),
   severity: z.enum(["low", "medium", "high"]),
   what_changed: z.string().describe("One sentence on what this chunk changes, relevant to the claim."),
   what_to_verify: z.string().describe("One sentence telling the reviewer what to check before approving."),
+  evidence: z
+    .array(z.string())
+    .describe("The few added or removed lines that show the claim, copied exactly from the diff with their leading + or -. Empty if the claim is wrong."),
 });
 
 const tldrSchema = z.object({
@@ -39,6 +42,8 @@ export interface Verdict {
   severity: "low" | "medium" | "high";
   whatChanged: string;
   whatToVerify: string;
+  /** The changed lines that show the claim, as they stand in the diff, in diff order. Never invented: see `quoted`. */
+  evidence: string[];
   /** The model that wrote this verdict, or null when no model was asked. */
   model: string | null;
 }
@@ -110,6 +115,8 @@ export async function write(input: WriterInput): Promise<Written> {
           severity: "high",
           whatChanged: "The added lines look like they contain a credential, key, or token.",
           whatToVerify: "Check the added lines, and if it is a real secret, rotate it and remove it from the branch history.",
+          // Quoting it would copy the secret into a comment that outlives a force-push.
+          evidence: [],
           model: null,
         };
       }
@@ -130,6 +137,7 @@ export async function write(input: WriterInput): Promise<Written> {
         severity: verdict.severity,
         whatChanged: verdict.what_changed,
         whatToVerify: verdict.what_to_verify,
+        evidence: quoted(verdict.evidence, hunk),
         model: generator.model,
       };
     }),
@@ -147,6 +155,19 @@ export async function write(input: WriterInput): Promise<Written> {
     tldr = result.tldr;
   }
   return { verdicts, tldr, usage };
+}
+
+const MAX_EVIDENCE_LINES = 6;
+
+// The generator points, the diff speaks. A line it returns is kept only if the hunk has that changed
+// line, and what is shown is the hunk's own text, so nothing the model wrote reaches the comment as code.
+function quoted(evidence: string[], hunk: Hunk): string[] {
+  const bare = (line: string) => line.replace(/^[+-]/, "").trim();
+  const wanted = new Set(evidence.map(bare).filter(Boolean));
+  return hunk.content
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && wanted.has(bare(line)))
+    .slice(0, MAX_EVIDENCE_LINES);
 }
 
 function claimFor(flag: Flag, policy: Policy): string {
