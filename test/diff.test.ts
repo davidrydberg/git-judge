@@ -113,6 +113,16 @@ describe("mixed PR", () => {
   });
 });
 
+describe("test snapshots", () => {
+  test("are generated, whatever code they quote", () => {
+    const diff = (path: string) =>
+      [`diff --git a/${path} b/${path}`, "index 1111111..2222222 100644", `--- a/${path}`, `+++ b/${path}`, "@@ -1 +1,2 @@", "+exports[`auth 1`] = `src/auth/session.ts`;", " // Vitest Snapshot", ""].join("\n");
+    expect(parseDiff(diff("test/__snapshots__/report.test.ts.snap")).hunks[0]!.preClass).toBe("generated");
+    expect(parseDiff(diff("src/ui/Button.snap")).hunks[0]!.preClass).toBe("generated");
+    expect(parseDiff(diff("src/snapshot.ts")).hunks[0]!.preClass).toBeNull();
+  });
+});
+
 describe("classification ignores hunk content", () => {
   test("a @generated marker added by the PR does not opt the hunk out", () => {
     const diff = [

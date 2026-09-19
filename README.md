@@ -18,8 +18,8 @@ No inline comments and no review entries, so a PR with ten pushes still has one 
 |---|---|
 | TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
 | Blocking | Gates that fail the check: a possible secret, a destructive data change |
-| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed and what to verify |
-| Then read | The next five hunks by attention, linked |
+| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed, what to verify, and the changed lines that show it as a diff block. The writer model picks the lines, git-judge prints them from the diff, so a line the diff does not have is never shown |
+| Then read | The next ten hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice (each only where Jev was confident), and any question that came close to a flag, with the hunk's changed lines under it. Built from Jev's answers, no model writes it |
 | Not mentioned in the description | Files with changes the PR text does not cover |
 | Skip | How many hunks were mechanical, lockfile, generated, or vendored |
 | Notes | A weak or missing description, missing tests, a suggestion to split the PR |
@@ -63,6 +63,10 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: git-judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   git-judge:
     runs-on: ubuntu-latest
@@ -77,6 +81,9 @@ jobs:
 
 No checkout step is needed, git-judge reads the diff through the GitHub API and never runs the PR's code.
 `edited` re-runs it when the description changes, so fixing the description clears the findings about it.
+The `concurrency` block cancels a run when a newer push arrives, so you do not pay to judge a commit nobody will read.
+A run that still finishes late checks the PR head before posting and writes nothing if the head has moved.
+A cancelled run stays on the old commit as "cancelled", and some views of the PR show it like a failed check. It is not one: the check that counts is the run on the latest commit.
 There are no releases yet, so `@main` is the only ref.
 Pin a commit SHA instead if you do not want to follow `main`.
 
@@ -95,7 +102,7 @@ GitHub gives them no secrets, and running with `pull_request_target` has not had
 | Output | |
 |---|---|
 | `conclusion` | `success`, `failure`, or `did_not_run` |
-| `json` | The full findings, verdicts, reading order, and raw Jev answers |
+| `json` | The full findings, verdicts, reading order, and raw Jev answers, with the `headSha` that was judged and a stable `id` per finding |
 
 If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge did not run.
 Set `failOnError: true` in the policy to fail instead.
@@ -143,6 +150,8 @@ thresholds:
     secret_semantic: 0.9
   warnings:
     test_loosened: 0.7
+weights:
+  testFile: 0.5            # a hunk in a test file counts area and blast radius at half. A loosened test counts in full
 exclude:
   generated: ["**/*.gen.ts"]
   vendored: ["third_party/**"]
@@ -165,7 +174,8 @@ It can never fail the check.
 ## Limits you should know
 
 - The shipped thresholds are guesses. Jev's calibration differs per repo and per language, so expect to tune them. The Jev answers table in the comment is there to help with that.
-- A hunk that Jev marks mechanical is never read by a generative model, so a subtle bug inside one gets no second look. Set `minAttention: 0` to have every hunk considered.
+- A generative model reads only flagged hunks. A subtle bug in a hunk that raised no flag gets no second look, at any setting.
+- A hunk scoring under `minAttention` is left out of the reading order and can raise a gate but no warning. Set `minAttention: 0` to rank every hunk and let every warning fire on it.
 - The area and type labels are often wrong on small PRs.
 - A PR over GitHub's diff limit, about 300 files, ends as "did not run".
 - A hunk too large for Jev's context is judged on its first part only and listed as such in the comment.

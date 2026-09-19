@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import { context } from "@actions/github";
 import { createGenerator } from "./generators.js";
-import { createGitHub } from "./github.js";
+import { createGitHub, type GitHub } from "./github.js";
 import { createJudgeClient } from "./judge.js";
 import { runPipeline } from "./pipeline.js";
 import { parsePolicy } from "./policy.js";
@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     repo: context.repo.repo,
     number: pull.number,
     baseSha: pull.base.sha,
+    headSha: pull.head.sha,
   });
 
   // A broken policy file is the maintainer's bug, not an outage. It fails loudly instead of passing quietly.
@@ -46,9 +47,11 @@ async function main(): Promise<void> {
       escalationGenerator: escalation ? createGenerator(escalation.model, keys) : undefined,
       now: Date.now,
       prUrl: pull.html_url,
+      headSha: pull.head.sha,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    if (await skipIfStale(github)) return;
     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
     await github.upsertSummary(didNotRun.summary);
     core.setOutput("conclusion", "did_not_run");
@@ -57,12 +60,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (await skipIfStale(github)) return;
   await github.upsertSummary(report.summary);
   await github.syncLabels(report.labels);
   core.setOutput("conclusion", report.check.conclusion);
   core.setOutput("json", JSON.stringify(report.json));
   if (report.check.conclusion === "failure") core.setFailed(report.check.title);
   else core.info(report.check.title);
+}
+
+async function skipIfStale(github: GitHub): Promise<boolean> {
+  // If the head cannot be read the report is posted. A failed lookup must not hide the run's own
+  // result, or in the error path the reason the pipeline failed.
+  const moved = await github.headMoved().catch(() => false);
+  if (!moved) return false;
+  core.notice("The pull request has a newer commit. This run posts nothing, the run for that commit will.");
+  core.setOutput("conclusion", "did_not_run");
+  return true;
 }
 
 main().catch((error: unknown) => {

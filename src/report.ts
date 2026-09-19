@@ -7,11 +7,12 @@ import type { Verdict, Written } from "./writer.js";
 export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
 const JSON_OPEN = "<!-- git-judge:json";
 const MAX_FLAGGED_LISTED = 15;
-const MAX_UNFLAGGED_LISTED = 5;
+const MAX_UNFLAGGED_LISTED = 10;
 const MAX_FILES_LISTED = 10;
 const MAX_TABLE_ROWS = 60;
 // GitHub rejects a comment over 65,536 characters. Past this size the raw answers leave the JSON block.
 const MAX_COMMENT_CHARS = 60_000;
+const MAX_EMBEDDED_READING_ORDER = 50;
 // A statement about the PR rather than about a line, so it is reported once with its files
 // and not per hunk. One PR raised it on 18 hunks with the same sentence.
 const PR_LEVEL_FLAG = "unrelated_to_description";
@@ -32,6 +33,8 @@ export interface ReportInput {
   durationMs: number;
   /** For example https://github.com/owner/repo/pull/12. With it, every location links to its line in the diff. */
   prUrl?: string | undefined;
+  /** The commit the diff was read at. It ties the report to what was judged. */
+  headSha?: string | undefined;
 }
 
 // git-judge posts exactly one comment per PR and updates it in place. It posts no inline review
@@ -46,10 +49,13 @@ export interface Report {
 
 export interface ReportJson {
   version: 1;
+  /** The commit this report describes, or null when the caller did not say. */
+  headSha: string | null;
   conclusion: "success" | "failure";
   tldr: string | null;
-  verdicts: (Verdict & Location)[];
-  readingOrder: ({ hunkId: string; attention: number } & Location)[];
+  /** `id` survives a push that leaves the flagged lines alone, so a reader can tell a standing finding from a new one. */
+  verdicts: (Verdict & Location & { id: string })[];
+  readingOrder: (Findings["readingOrder"][number] & Location)[];
   /** Every raw Jev answer, per judged hunk and for the PR. Dropped only if the comment would be too large. */
   jev: { hunks: Record<string, JevRow>; pr: { descriptionQuality: number; testsCoverChange: number } } | null;
   prWarnings: PrWarning[];
@@ -135,11 +141,20 @@ export function buildReport(input: ReportInput): Report {
     return hunk;
   };
 
+  const seen = new Map<string, number>();
   const json: ReportJson = {
     version: 1,
+    headSha: input.headSha ?? null,
     conclusion: findings.conclusion,
     tldr: written.tldr,
-    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
+    verdicts: written.verdicts.map((verdict) => {
+      const hunk = hunkOf(verdict.hunkId);
+      const id = findingId(verdict.flagId, hunk);
+      const count = (seen.get(id) ?? 0) + 1;
+      seen.set(id, count);
+      // The same edit twice in one file hashes the same, so the later one is numbered.
+      return { id: count === 1 ? id : `${id}-${count}`, ...verdict, ...locationOf(hunk) };
+    }),
     readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
       ...entry,
       ...locationOf(hunkOf(entry.hunkId)),
@@ -185,10 +200,19 @@ export function buildReport(input: ReportInput): Report {
 
 function renderWithinLimit(json: ReportJson, input: ReportInput): string {
   const flagged = new Set(input.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
-  const full = renderSummary(json, input.hunks.length, input.prUrl, flagged);
-  if (full.length <= MAX_COMMENT_CHARS) return full;
-  // The table keeps its row cap, so what grows without bound is the JSON. The raw answers go first.
-  return renderSummary({ ...json, jev: null }, input.hunks.length, input.prUrl, flagged, json.jev);
+  // The visible comment is capped everywhere, so what grows without bound is the embedded JSON.
+  // The raw answers leave it first, then the tail of the reading order. The action output keeps both.
+  const embedded: ReportJson[] = [
+    json,
+    { ...json, jev: null },
+    { ...json, jev: null, readingOrder: json.readingOrder.slice(0, MAX_EMBEDDED_READING_ORDER) },
+  ];
+  let summary = "";
+  for (const candidate of embedded) {
+    summary = renderSummary(json, input.hunks, input.prUrl, flagged, candidate);
+    if (summary.length <= MAX_COMMENT_CHARS) break;
+  }
+  return summary;
 }
 
 function jevRow(hunk: Hunk, answers: HunkAnswers): JevRow {
@@ -271,6 +295,28 @@ function renderJevTable(
   ];
 }
 
+// The hunk id is a position in the diff and moves when a push adds a hunk above it. This id is the
+// flag, the file, and the hunk's changed lines, so it survives edits elsewhere in the file. It covers
+// the whole hunk, not only the lines the flag is about: an edit within three lines merges into the
+// hunk and changes the id, which then reads as a new finding.
+function findingId(flagId: string, hunk: Hunk): string {
+  const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
+  return createHash("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
+}
+
+const MAX_SNIPPET_LINES = 8;
+const MAX_SNIPPET_LINE_CHARS = 200;
+
+// A diff block inside a list item. The lines are author-controlled, so the fence is made longer
+// than any run of backticks in them and nothing inside it can close the block.
+function snippet(lines: string[], indent = "  "): string {
+  const shown = lines.slice(0, MAX_SNIPPET_LINES).map((line) => line.slice(0, MAX_SNIPPET_LINE_CHARS));
+  if (lines.length > shown.length) shown.push(`  ... ${plural(lines.length - shown.length, "more changed line")}`);
+  const longest = Math.max(2, ...shown.flatMap((line) => (line.match(/`+/g) ?? []).map((run) => run.length)));
+  const fence = "`".repeat(longest + 1);
+  return ["", "", `${fence}diff`, ...shown, fence].map((line) => (line ? indent + line : "")).join("\n");
+}
+
 function locationOf(hunk: Hunk): Location {
   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
 }
@@ -283,6 +329,38 @@ function where(location: Location, prUrl: string | undefined): string {
   const file = createHash("sha256").update(location.path).digest("hex");
   const side = location.anchor.side === "LEFT" ? "L" : "R";
   return `[${text}](${prUrl}/files#diff-${file}${side}${location.anchor.line})`;
+}
+
+const AREA_TEXT: Record<string, string> = {
+  auth: "auth",
+  payments: "payments",
+  data_migration: "data migration",
+  public_api: "public API",
+};
+
+// Why an unflagged hunk is on the list, from answers Jev already gave. No model writes this.
+// Policy has already dropped the picks Jev was not confident in, so a guess is never stated as a fact.
+function whyRead(entry: ReportJson["readingOrder"][number]): string {
+  const parts: string[] = [];
+  if (entry.changeType) parts.push(entry.changeType);
+  const area = entry.area ? AREA_TEXT[entry.area] : undefined;
+  if (area) parts.push(`touches ${area}`);
+  if (entry.blastRadius && entry.blastRadius !== "nobody") parts.push(`${entry.blastRadius} would notice`);
+  const close = entry.nearMisses.map(
+    (miss) => `${flagTitle(miss.id).toLowerCase()} ${miss.probability.toFixed(2)}, flags at ${miss.threshold}`,
+  );
+  return [parts.join(", "), close.length > 0 ? `Close to a flag: ${close.join("; ")}` : ""].filter(Boolean).join(". ");
+}
+
+// A near miss has no model to point at lines, so the hunk's own changed lines are shown, cut short.
+// Never for a possible secret: the comment would keep it after a force-push removed it from the branch.
+function closeCall(entry: ReportJson["readingOrder"][number], hunks: Hunk[]): string {
+  if (entry.nearMisses.length === 0 || entry.nearMisses.some((miss) => miss.id === "secret_semantic")) return "";
+  const changed = hunks
+    .find((hunk) => hunk.id === entry.hunkId)
+    ?.content.split("\n")
+    .filter((line) => /^[+-]/.test(line));
+  return changed && changed.length > 0 ? snippet(changed, "   ") : "";
 }
 
 // Policy ranks by attention before the writer has looked at anything. Here the verdicts are in:
@@ -299,10 +377,11 @@ function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]): 
 
 function renderSummary(
   json: ReportJson,
-  hunkCount: number,
+  hunks: Hunk[],
   prUrl: string | undefined,
   flagged: Set<string>,
-  tableData: ReportJson["jev"] = json.jev,
+  /** What goes in the hidden block. The visible comment is always rendered from the full `json`. */
+  embedded: ReportJson = json,
 ): string {
   const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
@@ -314,7 +393,7 @@ function renderSummary(
       verdict.whatChanged,
       `**Verify:** ${verdict.whatToVerify}`,
       ...(note ? [note] : []),
-    ].join("<br>\n  ");
+    ].join("<br>\n  ") + (verdict.evidence.length > 0 ? snippet(verdict.evidence) : "");
 
   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
   if (gates.length > 0) {
@@ -345,7 +424,8 @@ function renderSummary(
   if (unflagged.length > 0) {
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
-      out.push(`${index + 1}. ${where(entry, prUrl)}`);
+      const reason = whyRead(entry);
+      out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}${closeCall(entry, hunks)}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
     if (rest > 0) out.push("", `And ${plural(rest, "more hunk")} with no finding, in the JSON block of this comment.`);
@@ -388,13 +468,14 @@ function renderSummary(
   }
   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
 
-  if (tableData) out.push(...renderJevTable(json, tableData, prUrl, flagged));
+  if (json.jev) out.push(...renderJevTable(json, json.jev, prUrl, flagged));
 
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
-  out.push("---", `<sub>${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
+  const commit = json.headSha ? `judged at ${json.headSha.slice(0, 7)} | ` : "";
+  out.push("---", `<sub>${commit}${plural(hunks.length, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
 
   // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
-  out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");
+  out.push("", JSON_OPEN, JSON.stringify(embedded).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
 }
 

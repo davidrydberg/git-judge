@@ -15,6 +15,7 @@ export interface PipelineInput {
   /** Milliseconds clock, injected so the reported duration is testable. */
   now: () => number;
   prUrl?: string | undefined;
+  headSha?: string | undefined;
 }
 
 /** Diff in, report out. Touches no network except through the injected clients. */
@@ -53,5 +54,5 @@ export async function runPipeline(input: PipelineInput): Promise<Report> {
     generator: input.generator,
     escalationGenerator: input.escalationGenerator,
   });
-  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started, prUrl: input.prUrl });
+  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started, prUrl: input.prUrl, headSha: input.headSha });
 }

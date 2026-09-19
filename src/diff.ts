@@ -82,6 +82,9 @@ const GENERATED = [
   /\.g\.dart$/,
   /\.generated\.[^./]+$/,
   /\.designer\.cs$/i,
+  // Test snapshots. They quote the code they render, so Jev reads an auth path in one as auth code.
+  /(^|\/)__snapshots__\//,
+  /\.snap$/,
 ];
 
 const TEST_PATHS = [

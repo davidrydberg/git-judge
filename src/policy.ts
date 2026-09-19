@@ -57,9 +57,11 @@ const policySchema = z.strictObject({
           "money or data": weight.default(2),
         })
         .prefault({}),
+      /** Scales area and blast radius for a hunk in a test file. A loosened test still counts in full. */
+      testFile: weight.default(0.5),
     })
     .prefault({}),
-  /** Hunks scoring below this are counted as mechanical. Set to 0 to review every hunk. */
+  /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
   minAttention: z.number().min(0).default(0.5),
   /** Below this many characters the description is treated as missing. */
   minDescriptionLength: z.number().int().min(0).default(30),
@@ -141,11 +143,26 @@ export type PrWarning =
   | { id: "tests_missing"; probability: number }
   | { id: "split_suggested"; changeTypes: string[] };
 
+/** A question that scored under its threshold but close enough to tell the reader what to look for. */
+export interface NearMiss {
+  id: Flag["id"];
+  probability: number;
+  threshold: number;
+}
+
 export interface Findings {
   flags: Flag[];
   prWarnings: PrWarning[];
   /** Hunks worth reading, most important first. */
-  readingOrder: { hunkId: string; attention: number }[];
+  readingOrder: {
+    hunkId: string;
+    attention: number;
+    nearMisses: NearMiss[];
+    /** Jev's picks for the hunk, each null when it was not confident enough to be repeated to a reader. */
+    changeType: string | null;
+    area: string | null;
+    blastRadius: string | null;
+  }[];
   skipped: { mechanical: number; lockfile: number; generated: number; vendored: number; overCap: number };
   lowCoverage: string[];
   labels: string[];
@@ -168,7 +185,7 @@ function claimsRefactor(answers: HunkAnswers, policy: Policy): boolean {
   return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
 }
 
-export function attention(answers: HunkAnswers, policy: Policy): number {
+export function attention(answers: HunkAnswers, policy: Policy, isTest = false): number {
   const { code } = answers;
   // Every feature and bugfix changes behaviour, and Jev says so at 0.95. Counted for all hunks it
   // drowned out the other two signals, so it counts only where it is a finding: inside a refactor.
@@ -177,8 +194,11 @@ export function attention(answers: HunkAnswers, policy: Policy): number {
     code.safety_check_weakened.noul,
     claimsRefactor(answers, policy) ? code.refactor_changes_behaviour.noul : 0,
   );
+  // A test that mentions auth is not auth code. Where scores are close, which is most PRs, tests
+  // were outranking the production code they cover. The judgement term is left alone.
   return (
-    (1 - code.mechanical.noul) *
+    (isTest ? policy.weights.testFile : 1) *
+      (1 - code.mechanical.noul) *
       expectedWeight(code.sensitive_area.probabilities, policy.weights.area) *
       expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius) +
     2 * judgement
@@ -199,6 +219,10 @@ function expectedWeight<K extends string>(
 // Tests and docs accompany any kind of change, so they never count towards a split.
 const SPLITTABLE_TYPES = new Set(["feature", "bugfix", "refactor", "chore"]);
 
+// A score from this share of its threshold up to the threshold is a near miss. It raises nothing
+// and costs nothing, it only tells the reader why a hunk with no finding is still worth a look.
+const NEAR_MISS_SHARE = 0.5;
+
 export function evaluate(
   hunks: Hunk[],
   judgement: Judgement,
@@ -207,13 +231,19 @@ export function evaluate(
 ): Findings {
   const judged = hunks.flatMap((hunk) => {
     const answers = judgement.hunks[hunk.id];
-    return answers ? [{ hunk, answers, attention: attention(answers, policy) }] : [];
+    return answers ? [{ hunk, answers, attention: attention(answers, policy, hunk.isTest) }] : [];
   });
   const confident = (answer: { confidence: number }) =>
     answer.confidence >= policy.thresholds.choiceConfidence;
+  const sure = (answer: { choice: string; confidence: number }) => (confident(answer) ? answer.choice : null);
 
   const flags: Flag[] = [];
   const gated = new Set<string>();
+  const nearMisses = new Map<string, NearMiss[]>();
+  const nearMiss = (hunkId: string, id: Flag["id"], probability: number, threshold: number) => {
+    if (probability < threshold * NEAR_MISS_SHARE) return;
+    nearMisses.set(hunkId, [...(nearMisses.get(hunkId) ?? []), { id, probability, threshold }]);
+  };
   for (const { hunk, answers } of judged) {
     // Gates compare a probability with a threshold and nothing else. The generator writes about
     // a gate flag but cannot clear it, since it reads the same author-controlled code.
@@ -222,6 +252,8 @@ export function evaluate(
       if (probability >= policy.thresholds.gates[id]) {
         flags.push({ hunkId: hunk.id, id, kind: "gate", probability, escalate: escalates(answers, policy) });
         gated.add(hunk.id);
+      } else {
+        nearMiss(hunk.id, id, probability, policy.thresholds.gates[id]);
       }
     }
   }
@@ -237,6 +269,9 @@ export function evaluate(
     const warn = (id: Flag["id"], probability: number, threshold: number) => {
       if (probability >= threshold) {
         flags.push({ hunkId: hunk.id, id, kind: "warning", probability, escalate: escalates(answers, policy) });
+        // The description flag is a statement about the PR, so a near miss on it says nothing about this hunk.
+      } else if (id !== "unrelated_to_description") {
+        nearMiss(hunk.id, id, probability, threshold);
       }
     };
     const { code, mismatch, custom } = answers;
@@ -289,7 +324,14 @@ export function evaluate(
   return {
     flags,
     prWarnings,
-    readingOrder: reading.map((entry) => ({ hunkId: entry.hunk.id, attention: entry.attention })),
+    readingOrder: reading.map((entry) => ({
+      hunkId: entry.hunk.id,
+      attention: entry.attention,
+      nearMisses: nearMisses.get(entry.hunk.id) ?? [],
+      changeType: sure(entry.answers.code.change_type),
+      area: sure(entry.answers.code.sensitive_area),
+      blastRadius: sure(entry.answers.code.blast_radius),
+    })),
     skipped: {
       mechanical: judged.length - reading.length,
       lockfile: count("lockfile"),

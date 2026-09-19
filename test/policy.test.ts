@@ -145,6 +145,13 @@ describe("attention formula", () => {
     expect(attention(answers(spec), policy)).toBeCloseTo(expected);
   });
 
+  test("a test file counts area and blast radius at half, a loosened test in full", () => {
+    const spec = { area: "auth", blast: "end users", testLoosened: 0.4 };
+    expect(attention(answers(spec), policy)).toBeCloseTo(3.8);
+    expect(attention(answers(spec), policy, true)).toBeCloseTo(2.3);
+    expect(attention(answers(spec), parsePolicy("weights:\n  testFile: 1"), true)).toBeCloseTo(3.8);
+  });
+
   test("area weight follows the probabilities, not only the top option", () => {
     const split = answers();
     Object.assign(split.code.sensitive_area.probabilities, { auth: 0.5, none: 0.5 });
@@ -162,6 +169,36 @@ describe("reading order", () => {
     });
     expect(findings.readingOrder.map((entry) => entry.hunkId)).toEqual(["auth", "plain"]);
     expect(findings.skipped.mechanical).toBe(2);
+  });
+
+  test("a score from half its threshold up to the threshold is a near miss, with no flag", () => {
+    const findings = run({ close: { safety: 0.44, testLoosened: 0.29, secret: 0.5 }, far: { safety: 0.1 } });
+    expect(findings.flags).toEqual([]);
+    const misses = Object.fromEntries(findings.readingOrder.map((entry) => [entry.hunkId, entry.nearMisses]));
+    expect(misses.close).toEqual([
+      { id: "secret_semantic", probability: 0.5, threshold: 0.9 },
+      { id: "safety_check_weakened", probability: 0.44, threshold: 0.6 },
+    ]);
+    expect(misses.far).toEqual([]);
+  });
+
+  test("a raised flag is not also a near miss, and the description flag never is one", () => {
+    const findings = run({ hit: { safety: 0.7, unrelated: 0.5 } });
+    expect(findings.flags.map((flag) => flag.id)).toEqual(["safety_check_weakened"]);
+    expect(findings.readingOrder[0]!.nearMisses).toEqual([]);
+  });
+
+  test("changing behaviour is a near miss only where it could be a flag, inside a refactor", () => {
+    expect(run({ feature: { behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([]);
+    expect(run({ tidy: { type: "refactor", behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([
+      { id: "refactor_changes_behaviour", probability: 0.5, threshold: 0.6 },
+    ]);
+  });
+
+  test("a pick Jev was not confident in is not passed on as a reason to read", () => {
+    const [sure, guess] = [run({ a: { type: "bugfix", area: "auth" } }), run({ a: { type: "bugfix", typeConfidence: 0.39 } })];
+    expect(sure.readingOrder[0]).toMatchObject({ changeType: "bugfix", area: "auth", blastRadius: "other developers" });
+    expect(guess.readingOrder[0]).toMatchObject({ changeType: null, area: "none" });
   });
 
   test("the cutoff is inclusive, and zero keeps every hunk", () => {
@@ -242,7 +279,8 @@ describe("test files", () => {
     } as unknown as Judgement;
     const findings = evaluate(hunks, judgement, DESCRIPTION, parsePolicy(""));
 
-    expect(flagIds(findings)).toEqual(["spec:test_loosened", "code:test_loosened", "code:safety_check_weakened"]);
+    // The test file ranks below the production file it sits beside, so its flag comes after.
+    expect(flagIds(findings)).toEqual(["code:test_loosened", "code:safety_check_weakened", "spec:test_loosened"]);
   });
 });
 

@@ -11,11 +11,14 @@ export interface PullRequestRef {
   repo: string;
   number: number;
   baseSha: string;
+  headSha: string;
 }
 
 export interface GitHub {
   fetchDiff(): Promise<string>;
   fetchPolicy(): Promise<string>;
+  /** True when the PR has a newer head than the one this run judged. */
+  headMoved(): Promise<boolean>;
   upsertSummary(body: string): Promise<void>;
   syncLabels(labels: string[]): Promise<void>;
 }
@@ -49,6 +52,12 @@ export function createGitHub(token: string, pr: PullRequestRef): GitHub {
         if ((error as { status?: number }).status === 404) return "";
         throw error;
       }
+    },
+
+    // Runs finish out of order. A run that lost the race must not write its report over a newer one.
+    async headMoved() {
+      const response = await octokit.rest.pulls.get({ ...repo, pull_number: pr.number });
+      return response.data.head.sha !== pr.headSha;
     },
 
     async upsertSummary(body) {
