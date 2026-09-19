@@ -19,7 +19,7 @@ No inline comments and no review entries, so a PR with ten pushes still has one 
 | TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
 | Blocking | Gates that fail the check: a possible secret, a destructive data change |
 | Read first | Each confirmed finding, linked to its line in the Files tab, with what changed, what to verify, and the changed lines that show it as a diff block. The writer model picks the lines, git-judge prints them from the diff, so a line the diff does not have is never shown |
-| Then read | The next five hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice, and any question that came close to a flag, with the hunk's changed lines under it. Built from Jev's answers, no model writes it |
+| Then read | The next ten hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice (each only where Jev was confident), and any question that came close to a flag, with the hunk's changed lines under it. Built from Jev's answers, no model writes it |
 | Not mentioned in the description | Files with changes the PR text does not cover |
 | Skip | How many hunks were mechanical, lockfile, generated, or vendored |
 | Notes | A weak or missing description, missing tests, a suggestion to split the PR |
@@ -83,6 +83,7 @@ No checkout step is needed, git-judge reads the diff through the GitHub API and 
 `edited` re-runs it when the description changes, so fixing the description clears the findings about it.
 The `concurrency` block cancels a run when a newer push arrives, so you do not pay to judge a commit nobody will read.
 A run that still finishes late checks the PR head before posting and writes nothing if the head has moved.
+A cancelled run stays on the old commit as "cancelled", and some views of the PR show it like a failed check. It is not one: the check that counts is the run on the latest commit.
 There are no releases yet, so `@main` is the only ref.
 Pin a commit SHA instead if you do not want to follow `main`.
 
@@ -149,6 +150,8 @@ thresholds:
     secret_semantic: 0.9
   warnings:
     test_loosened: 0.7
+weights:
+  testFile: 0.5            # a hunk in a test file counts area and blast radius at half. A loosened test counts in full
 exclude:
   generated: ["**/*.gen.ts"]
   vendored: ["third_party/**"]

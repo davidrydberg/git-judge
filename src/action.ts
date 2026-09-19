@@ -70,7 +70,10 @@ async function main(): Promise<void> {
 }
 
 async function skipIfStale(github: GitHub): Promise<boolean> {
-  if (!(await github.headMoved())) return false;
+  // If the head cannot be read the report is posted. A failed lookup must not hide the run's own
+  // result, or in the error path the reason the pipeline failed.
+  const moved = await github.headMoved().catch(() => false);
+  if (!moved) return false;
   core.notice("The pull request has a newer commit. This run posts nothing, the run for that commit will.");
   core.setOutput("conclusion", "did_not_run");
   return true;

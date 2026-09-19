@@ -145,6 +145,13 @@ describe("attention formula", () => {
     expect(attention(answers(spec), policy)).toBeCloseTo(expected);
   });
 
+  test("a test file counts area and blast radius at half, a loosened test in full", () => {
+    const spec = { area: "auth", blast: "end users", testLoosened: 0.4 };
+    expect(attention(answers(spec), policy)).toBeCloseTo(3.8);
+    expect(attention(answers(spec), policy, true)).toBeCloseTo(2.3);
+    expect(attention(answers(spec), parsePolicy("weights:\n  testFile: 1"), true)).toBeCloseTo(3.8);
+  });
+
   test("area weight follows the probabilities, not only the top option", () => {
     const split = answers();
     Object.assign(split.code.sensitive_area.probabilities, { auth: 0.5, none: 0.5 });
@@ -186,6 +193,12 @@ describe("reading order", () => {
     expect(run({ tidy: { type: "refactor", behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([
       { id: "refactor_changes_behaviour", probability: 0.5, threshold: 0.6 },
     ]);
+  });
+
+  test("a pick Jev was not confident in is not passed on as a reason to read", () => {
+    const [sure, guess] = [run({ a: { type: "bugfix", area: "auth" } }), run({ a: { type: "bugfix", typeConfidence: 0.39 } })];
+    expect(sure.readingOrder[0]).toMatchObject({ changeType: "bugfix", area: "auth", blastRadius: "other developers" });
+    expect(guess.readingOrder[0]).toMatchObject({ changeType: null, area: "none" });
   });
 
   test("the cutoff is inclusive, and zero keeps every hunk", () => {
@@ -266,7 +279,8 @@ describe("test files", () => {
     } as unknown as Judgement;
     const findings = evaluate(hunks, judgement, DESCRIPTION, parsePolicy(""));
 
-    expect(flagIds(findings)).toEqual(["spec:test_loosened", "code:test_loosened", "code:safety_check_weakened"]);
+    // The test file ranks below the production file it sits beside, so its flag comes after.
+    expect(flagIds(findings)).toEqual(["code:test_loosened", "code:safety_check_weakened", "spec:test_loosened"]);
   });
 });
 

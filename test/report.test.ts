@@ -54,6 +54,14 @@ function verdict(path: string, flagId: Verdict["flagId"], overrides: Partial<Ver
   };
 }
 
+function entry(
+  hunkId: string,
+  attention: number,
+  overrides: Partial<Findings["readingOrder"][number]> = {},
+): Findings["readingOrder"][number] {
+  return { hunkId, attention, nearMisses: [], changeType: null, area: null, blastRadius: null, ...overrides };
+}
+
 function findings(overrides: Partial<Findings> = {}): Findings {
   return {
     flags: [],
@@ -111,7 +119,7 @@ function jevAnswers(nouls: Record<string, number>, options: { unrelated?: number
 
 const CLEAN = input(
   findings({
-    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] }],
+    readingOrder: [entry("src/util/format.ts#0", 1)],
     skipped: { mechanical: 3, lockfile: 1, generated: 0, vendored: 0, overCap: 0 },
   }),
   { usage: {} },
@@ -120,9 +128,9 @@ const CLEAN = input(
 const WARNINGS = input(
   findings({
     readingOrder: [
-      { hunkId: "src/auth/session.ts#0", attention: 4.8, nearMisses: [] },
-      { hunkId: "test/invoice.test.ts#0", attention: 2.4, nearMisses: [] },
-      { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] },
+      entry("src/auth/session.ts#0", 4.8),
+      entry("test/invoice.test.ts#0", 2.4),
+      entry("src/util/format.ts#0", 1),
     ],
     prWarnings: [
       { id: "weak_description", score: 0.4 },
@@ -147,7 +155,7 @@ const WARNINGS = input(
 const GATED = input(
   findings({
     conclusion: "failure",
-    readingOrder: [{ hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 4, nearMisses: [] }],
+    readingOrder: [entry("db/migrations/007_drop_legacy.sql#0", 4)],
     skipped: { mechanical: 0, lockfile: 1, generated: 0, vendored: 0, overCap: 0 },
   }),
   {
@@ -164,7 +172,7 @@ const GATED = input(
 
 const OVER_CAP = input(
   findings({
-    readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] }],
+    readingOrder: [entry("src/util/format.ts#0", 1)],
     skipped: { mechanical: 0, lockfile: 1, generated: 0, vendored: 0, overCap: 140 },
     prWarnings: [{ id: "no_description" }],
   }),
@@ -198,11 +206,11 @@ describe("summary comment", () => {
     const report = buildReport({
       ...CLEAN,
       hunks: many,
-      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1, nearMisses: [] })) }),
+      findings: findings({ readingOrder: many.map((each) => entry(each.id, 1)) }),
     });
-    expect(report.summary).toContain("5. `src/file4.ts`");
-    expect(report.summary).not.toContain("6. `");
-    expect(report.summary).toContain("And 35 more hunks");
+    expect(report.summary).toContain("10. `src/file9.ts`");
+    expect(report.summary).not.toContain("11. `");
+    expect(report.summary).toContain("And 30 more hunks");
     expect(report.json.readingOrder).toHaveLength(40);
   });
 
@@ -211,9 +219,9 @@ describe("summary comment", () => {
       input(
         findings({
           readingOrder: [
-            { hunkId: "src/util/format.ts#0", attention: 3.1, nearMisses: [] },
-            { hunkId: "src/auth/session.ts#0", attention: 2.9, nearMisses: [] },
-            { hunkId: "db/migrations/007_drop_legacy.sql#0", attention: 0.2, nearMisses: [] },
+            entry("src/util/format.ts#0", 3.1),
+            entry("src/auth/session.ts#0", 2.9),
+            entry("db/migrations/007_drop_legacy.sql#0", 0.2),
           ],
         }),
         {
@@ -238,7 +246,7 @@ test("a hunk that only removes lines shows no bogus line number", () => {
   const report = buildReport({
     ...CLEAN,
     hunks: [removed],
-    findings: findings({ readingOrder: [{ hunkId: removed.id, attention: 1, nearMisses: [] }] }),
+    findings: findings({ readingOrder: [entry(removed.id, 1)] }),
   });
   expect(report.summary).toContain("1. `src/old.ts` (lines removed)");
 });
@@ -313,7 +321,7 @@ describe("a report another agent can act on", () => {
 describe("changes the description does not mention", () => {
   const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
   const report = buildReport(
-    input(findings({ readingOrder: paths.map((path) => ({ hunkId: `${path}#0`, attention: 1, nearMisses: [] })) }), {
+    input(findings({ readingOrder: paths.map((path) => entry(`${path}#0`, 1)) }), {
       tldr: "Renames things.",
       verdicts: [
         ...paths.map((path) => verdict(path, "unrelated_to_description")),
@@ -392,12 +400,12 @@ describe("Jev answers table", () => {
     expect(buildReport(WARNINGS).summary).not.toContain("<details>");
   });
 
-  test("a comment too large for GitHub drops the raw answers from the JSON, keeps the capped table", () => {
+  test("a comment too large for GitHub trims the hidden JSON, never the visible comment", () => {
     const many = Array.from({ length: 200 }, (_, index) => hunk(`src/some/deeply/nested/module/path/file${index}.ts`, 1, 5));
     const big = buildReport({
       ...CLEAN,
       hunks: many,
-      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1, nearMisses: [] })) }),
+      findings: findings({ readingOrder: many.map((each) => entry(each.id, 1)) }),
       judgement: { ...CLEAN.judgement, hunks: Object.fromEntries(many.map((entry) => [entry.id, jevAnswers({})])) },
       prUrl: "https://github.com/owner/repository/pull/123",
     });
@@ -406,6 +414,10 @@ describe("Jev answers table", () => {
     expect(big.json.jev).not.toBeNull();
     expect(big.summary.split("\n").filter((line) => line.startsWith("| [`"))).toHaveLength(60);
     expect(big.summary).toContain("And 140 more hunks");
+    // The reading order in the hidden block is cut too. The visible counts and the action output are not.
+    expect(extractJson(big.summary)!.readingOrder).toHaveLength(50);
+    expect(big.json.readingOrder).toHaveLength(200);
+    expect(big.summary).toContain("And 190 more hunks with no finding");
   });
 });
 
@@ -421,39 +433,35 @@ describe("one complete comment", () => {
     );
   });
 
-  test("an unflagged hunk says why it is on the list, from Jev's answers and what came close to a flag", () => {
-    const report = buildReport({
-      ...input(
+  test("an unflagged hunk says why it is on the list, from the picks policy kept and what came close to a flag", () => {
+    const report = buildReport(
+      input(
         findings({
           readingOrder: [
-            {
-              hunkId: "src/auth/session.ts#0",
-              attention: 2,
+            entry("src/auth/session.ts#0", 2, {
+              changeType: "refactor",
+              area: "auth",
+              blastRadius: "end users",
               nearMisses: [{ id: "safety_check_weakened", probability: 0.44, threshold: 0.6 }],
-            },
-            { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [] },
+            }),
+            // Policy dropped the type and the area as guesses. "none" and "nobody" are not reasons to read.
+            entry("test/invoice.test.ts#0", 1.5, { blastRadius: "other developers" }),
+            entry("src/util/format.ts#0", 1, { changeType: "chore", area: "none", blastRadius: "nobody" }),
           ],
         }),
       ),
-      judgement: {
-        model: "jev-1.13.0",
-        inputTokens: 1000,
-        pr: PR_ANSWERS,
-        hunks: { "src/auth/session.ts#0": jevAnswers({}) },
-      },
-    });
-    const row = report.json.jev!.hunks["src/auth/session.ts#0"]!;
-    expect(report.summary).toContain(
-      `1. \`src/auth/session.ts\` L1-13 - ${row.changeType.choice}, touches auth, ${row.blastRadius.choice} would notice. Close to a flag: safety check weakened 0.44, flags at 0.6`,
     );
-    // No Jev answers for this hunk, so there is nothing true to say about it.
-    expect(report.summary).toContain("2. `src/util/format.ts` L10\n");
+    expect(report.summary).toContain(
+      "1. `src/auth/session.ts` L1-13 - refactor, touches auth, end users would notice. Close to a flag: safety check weakened 0.44, flags at 0.6",
+    );
+    expect(report.summary).toContain("2. `test/invoice.test.ts` L2-6 - other developers would notice\n");
+    expect(report.summary).toContain("3. `src/util/format.ts` L10 - chore\n");
   });
 
   test("a finding shows its evidence as a diff block that the quoted code cannot close", () => {
     const evidence = ["-  if (expired(token)) throw new Error();", "+  const note = `a ``` fence`;"];
     const report = buildReport(
-      input(findings({ readingOrder: [{ hunkId: "src/auth/session.ts#0", attention: 2, nearMisses: [] }] }), {
+      input(findings({ readingOrder: [entry("src/auth/session.ts#0", 2)] }), {
         verdicts: [verdict("src/auth/session.ts", "safety_check_weakened", { evidence })],
       }),
     );
@@ -471,7 +479,7 @@ describe("one complete comment", () => {
         ...input(
           findings({
             readingOrder: [
-              { hunkId: "src/util/format.ts#0", attention: 1, nearMisses: [{ id, probability: 0.5, threshold: 0.9 }] },
+              entry("src/util/format.ts#0", 1, { nearMisses: [{ id, probability: 0.5, threshold: 0.9 }] }),
             ],
           }),
         ),

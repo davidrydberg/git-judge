@@ -7,11 +7,12 @@ import type { Verdict, Written } from "./writer.js";
 export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
 const JSON_OPEN = "<!-- git-judge:json";
 const MAX_FLAGGED_LISTED = 15;
-const MAX_UNFLAGGED_LISTED = 5;
+const MAX_UNFLAGGED_LISTED = 10;
 const MAX_FILES_LISTED = 10;
 const MAX_TABLE_ROWS = 60;
 // GitHub rejects a comment over 65,536 characters. Past this size the raw answers leave the JSON block.
 const MAX_COMMENT_CHARS = 60_000;
+const MAX_EMBEDDED_READING_ORDER = 50;
 // A statement about the PR rather than about a line, so it is reported once with its files
 // and not per hunk. One PR raised it on 18 hunks with the same sentence.
 const PR_LEVEL_FLAG = "unrelated_to_description";
@@ -199,10 +200,19 @@ export function buildReport(input: ReportInput): Report {
 
 function renderWithinLimit(json: ReportJson, input: ReportInput): string {
   const flagged = new Set(input.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
-  const full = renderSummary(json, input.hunks, input.prUrl, flagged);
-  if (full.length <= MAX_COMMENT_CHARS) return full;
-  // The table keeps its row cap, so what grows without bound is the JSON. The raw answers go first.
-  return renderSummary({ ...json, jev: null }, input.hunks, input.prUrl, flagged, json.jev);
+  // The visible comment is capped everywhere, so what grows without bound is the embedded JSON.
+  // The raw answers leave it first, then the tail of the reading order. The action output keeps both.
+  const embedded: ReportJson[] = [
+    json,
+    { ...json, jev: null },
+    { ...json, jev: null, readingOrder: json.readingOrder.slice(0, MAX_EMBEDDED_READING_ORDER) },
+  ];
+  let summary = "";
+  for (const candidate of embedded) {
+    summary = renderSummary(json, input.hunks, input.prUrl, flagged, candidate);
+    if (summary.length <= MAX_COMMENT_CHARS) break;
+  }
+  return summary;
 }
 
 function jevRow(hunk: Hunk, answers: HunkAnswers): JevRow {
@@ -286,7 +296,9 @@ function renderJevTable(
 }
 
 // The hunk id is a position in the diff and moves when a push adds a hunk above it. This id is the
-// flag, the file, and the changed lines only, so it moves only when the flagged code itself does.
+// flag, the file, and the hunk's changed lines, so it survives edits elsewhere in the file. It covers
+// the whole hunk, not only the lines the flag is about: an edit within three lines merges into the
+// hunk and changes the id, which then reads as a new finding.
 function findingId(flagId: string, hunk: Hunk): string {
   const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
   return createHash("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
@@ -327,14 +339,13 @@ const AREA_TEXT: Record<string, string> = {
 };
 
 // Why an unflagged hunk is on the list, from answers Jev already gave. No model writes this.
-function whyRead(entry: ReportJson["readingOrder"][number], row: JevRow | undefined): string {
+// Policy has already dropped the picks Jev was not confident in, so a guess is never stated as a fact.
+function whyRead(entry: ReportJson["readingOrder"][number]): string {
   const parts: string[] = [];
-  if (row) {
-    parts.push(row.changeType.choice);
-    const area = AREA_TEXT[row.sensitiveArea.choice];
-    if (area) parts.push(`touches ${area}`);
-    if (row.blastRadius.choice !== "nobody") parts.push(`${row.blastRadius.choice} would notice`);
-  }
+  if (entry.changeType) parts.push(entry.changeType);
+  const area = entry.area ? AREA_TEXT[entry.area] : undefined;
+  if (area) parts.push(`touches ${area}`);
+  if (entry.blastRadius && entry.blastRadius !== "nobody") parts.push(`${entry.blastRadius} would notice`);
   const close = entry.nearMisses.map(
     (miss) => `${flagTitle(miss.id).toLowerCase()} ${miss.probability.toFixed(2)}, flags at ${miss.threshold}`,
   );
@@ -369,7 +380,8 @@ function renderSummary(
   hunks: Hunk[],
   prUrl: string | undefined,
   flagged: Set<string>,
-  tableData: ReportJson["jev"] = json.jev,
+  /** What goes in the hidden block. The visible comment is always rendered from the full `json`. */
+  embedded: ReportJson = json,
 ): string {
   const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
@@ -412,7 +424,7 @@ function renderSummary(
   if (unflagged.length > 0) {
     out.push(located.size > 0 ? "### Then read" : "### Read in this order", "");
     unflagged.slice(0, MAX_UNFLAGGED_LISTED).forEach((entry, index) => {
-      const reason = whyRead(entry, tableData?.hunks[entry.hunkId]);
+      const reason = whyRead(entry);
       out.push(`${index + 1}. ${where(entry, prUrl)}${reason ? ` - ${reason}` : ""}${closeCall(entry, hunks)}`);
     });
     const rest = unflagged.length - MAX_UNFLAGGED_LISTED;
@@ -456,14 +468,14 @@ function renderSummary(
   }
   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
 
-  if (tableData) out.push(...renderJevTable(json, tableData, prUrl, flagged));
+  if (json.jev) out.push(...renderJevTable(json, json.jev, prUrl, flagged));
 
   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
   const commit = json.headSha ? `judged at ${json.headSha.slice(0, 7)} | ` : "";
   out.push("---", `<sub>${commit}${plural(hunks.length, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
 
   // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
-  out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");
+  out.push("", JSON_OPEN, JSON.stringify(embedded).replaceAll("-->", "--\\u003e"), "-->");
   return out.join("\n");
 }
 

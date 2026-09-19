@@ -57,6 +57,8 @@ const policySchema = z.strictObject({
           "money or data": weight.default(2),
         })
         .prefault({}),
+      /** Scales area and blast radius for a hunk in a test file. A loosened test still counts in full. */
+      testFile: weight.default(0.5),
     })
     .prefault({}),
   /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
@@ -152,7 +154,15 @@ export interface Findings {
   flags: Flag[];
   prWarnings: PrWarning[];
   /** Hunks worth reading, most important first. */
-  readingOrder: { hunkId: string; attention: number; nearMisses: NearMiss[] }[];
+  readingOrder: {
+    hunkId: string;
+    attention: number;
+    nearMisses: NearMiss[];
+    /** Jev's picks for the hunk, each null when it was not confident enough to be repeated to a reader. */
+    changeType: string | null;
+    area: string | null;
+    blastRadius: string | null;
+  }[];
   skipped: { mechanical: number; lockfile: number; generated: number; vendored: number; overCap: number };
   lowCoverage: string[];
   labels: string[];
@@ -175,7 +185,7 @@ function claimsRefactor(answers: HunkAnswers, policy: Policy): boolean {
   return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
 }
 
-export function attention(answers: HunkAnswers, policy: Policy): number {
+export function attention(answers: HunkAnswers, policy: Policy, isTest = false): number {
   const { code } = answers;
   // Every feature and bugfix changes behaviour, and Jev says so at 0.95. Counted for all hunks it
   // drowned out the other two signals, so it counts only where it is a finding: inside a refactor.
@@ -184,8 +194,11 @@ export function attention(answers: HunkAnswers, policy: Policy): number {
     code.safety_check_weakened.noul,
     claimsRefactor(answers, policy) ? code.refactor_changes_behaviour.noul : 0,
   );
+  // A test that mentions auth is not auth code. Where scores are close, which is most PRs, tests
+  // were outranking the production code they cover. The judgement term is left alone.
   return (
-    (1 - code.mechanical.noul) *
+    (isTest ? policy.weights.testFile : 1) *
+      (1 - code.mechanical.noul) *
       expectedWeight(code.sensitive_area.probabilities, policy.weights.area) *
       expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius) +
     2 * judgement
@@ -218,10 +231,11 @@ export function evaluate(
 ): Findings {
   const judged = hunks.flatMap((hunk) => {
     const answers = judgement.hunks[hunk.id];
-    return answers ? [{ hunk, answers, attention: attention(answers, policy) }] : [];
+    return answers ? [{ hunk, answers, attention: attention(answers, policy, hunk.isTest) }] : [];
   });
   const confident = (answer: { confidence: number }) =>
     answer.confidence >= policy.thresholds.choiceConfidence;
+  const sure = (answer: { choice: string; confidence: number }) => (confident(answer) ? answer.choice : null);
 
   const flags: Flag[] = [];
   const gated = new Set<string>();
@@ -314,6 +328,9 @@ export function evaluate(
       hunkId: entry.hunk.id,
       attention: entry.attention,
       nearMisses: nearMisses.get(entry.hunk.id) ?? [],
+      changeType: sure(entry.answers.code.change_type),
+      area: sure(entry.answers.code.sensitive_area),
+      blastRadius: sure(entry.answers.code.blast_radius),
     })),
     skipped: {
       mechanical: judged.length - reading.length,

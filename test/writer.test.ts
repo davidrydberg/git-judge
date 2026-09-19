@@ -110,6 +110,23 @@ describe("verdicts", () => {
     expect(verdicts[0]!.evidence).toEqual([]);
   });
 
+  test("no other flag on a hunk with a possible secret reaches the generator or quotes the hunk", async () => {
+    const { generator, requests } = fakeGenerator("gpt-5.6-luna", {
+      "config/prod.ts": { confirmed: true, evidence: ["+new config/prod.ts"] },
+    });
+    const flags = [
+      flag("config/prod.ts", "secret_semantic"),
+      flag("config/prod.ts", "destructive_data"),
+      flag("config/prod.ts", "safety_check_weakened"),
+    ];
+    const { verdicts } = await write(input(flags, generator));
+
+    expect(requests.filter((request) => request.schemaName === "verdict")).toEqual([]);
+    // The warning needs the generator to stand, so it goes. The gate stands on its probability.
+    expect(verdicts.map((verdict) => verdict.flagId)).toEqual(["secret_semantic", "destructive_data"]);
+    expect(verdicts.every((verdict) => verdict.evidence.length === 0 && verdict.model === null)).toBe(true);
+  });
+
   test("a rejected warning is dropped entirely", async () => {
     const { generator } = fakeGenerator("gpt-5.6-luna", { "src/noise.ts": { confirmed: false } });
     const flags = [flag("src/auth.ts", "safety_check_weakened"), flag("src/noise.ts", "comment_drift")];
