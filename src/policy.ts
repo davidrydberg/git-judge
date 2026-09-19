@@ -1,6 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import type { Hunk } from "./diff.js";
+import { isProse, type Hunk } from "./diff.js";
 import type { HunkAnswers, Judgement } from "./judge.js";
 import { GATES, type GateId } from "./questions.js";
 
@@ -23,10 +23,12 @@ const policySchema = z.strictObject({
         .prefault({}),
       warnings: z
         .strictObject({
-          test_loosened: probability.default(0.6),
-          safety_check_weakened: probability.default(0.6),
-          refactor_changes_behaviour: probability.default(0.6),
-          comment_drift: probability.default(0.7),
+          // Low on purpose. Jev is the recall stage: the writer reads every flagged hunk and drops a
+          // warning the code does not show, for about $0.0005 a hunk. Gates stay high, nothing clears them.
+          test_loosened: probability.default(0.4),
+          safety_check_weakened: probability.default(0.4),
+          refactor_changes_behaviour: probability.default(0.4),
+          comment_drift: probability.default(0.5),
           unrelated_to_description: probability.default(0.7),
         })
         .prefault({}),
@@ -59,6 +61,8 @@ const policySchema = z.strictObject({
         .prefault({}),
       /** Scales area and blast radius for a hunk in a test file. A loosened test still counts in full. */
       testFile: weight.default(0.5),
+      /** How much the strongest logic signal (error handling, condition, IO, shared state, limit) adds: base * (1 + this * p). */
+      logicSignal: weight.default(1),
     })
     .prefault({}),
   /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
@@ -113,10 +117,10 @@ export type Policy = z.infer<typeof policySchema>;
 /** Parses the policy file. An empty or missing file gives the defaults. Unknown keys are errors. */
 export function parsePolicy(yaml: string): Policy {
   const parsed = policySchema.safeParse(parseYaml(yaml) ?? {});
-  if (!parsed.success) throw new Error(`Invalid git-judge policy:\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new Error(`Invalid git-judge-jev policy:\n${z.prettifyError(parsed.error)}`);
   const ids = parsed.data.customQuestions.map((question) => question.id);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicate) throw new Error(`Invalid git-judge policy:\ncustom question id "${duplicate}" is used twice`);
+  if (duplicate) throw new Error(`Invalid git-judge-jev policy:\ncustom question id "${duplicate}" is used twice`);
   return parsed.data;
 }
 
@@ -158,6 +162,8 @@ export interface Findings {
     hunkId: string;
     attention: number;
     nearMisses: NearMiss[];
+    /** Logic signals Jev is sure of, strongest first. They raise nothing, they tell the reader what kind of code changed. */
+    signals: (typeof LOGIC_SIGNALS)[number][];
     /** Jev's picks for the hunk, each null when it was not confident enough to be repeated to a reader. */
     changeType: string | null;
     area: string | null;
@@ -185,8 +191,31 @@ function claimsRefactor(answers: HunkAnswers, policy: Policy): boolean {
   return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
 }
 
-export function attention(answers: HunkAnswers, policy: Policy, isTest = false): number {
+/** Questions that raise no flag and only say what kind of logic changed. */
+export const LOGIC_SIGNALS = [
+  "error_handling_changed",
+  "condition_changed",
+  "external_io_added",
+  "shared_state_changed",
+  "limit_or_default_changed",
+] as const;
+
+export interface HunkTraits {
+  isTest?: boolean;
+  /** Prose has no tests to loosen and no checks to weaken, so only area and blast radius count. */
+  isProse?: boolean;
+}
+
+export function attention(answers: HunkAnswers, policy: Policy, traits: HunkTraits = {}): number {
   const { code } = answers;
+  const { isTest = false } = traits;
+  if (traits.isProse) {
+    return (
+      (1 - code.mechanical.noul) *
+      expectedWeight(code.sensitive_area.probabilities, policy.weights.area) *
+      expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius)
+    );
+  }
   // Every feature and bugfix changes behaviour, and Jev says so at 0.95. Counted for all hunks it
   // drowned out the other two signals, so it counts only where it is a finding: inside a refactor.
   const judgement = Math.max(
@@ -196,8 +225,10 @@ export function attention(answers: HunkAnswers, policy: Policy, isTest = false):
   );
   // A test that mentions auth is not auth code. Where scores are close, which is most PRs, tests
   // were outranking the production code they cover. The judgement term is left alone.
+  const logic = Math.max(...LOGIC_SIGNALS.map((id) => code[id].noul));
   return (
     (isTest ? policy.weights.testFile : 1) *
+      (1 + policy.weights.logicSignal * logic) *
       (1 - code.mechanical.noul) *
       expectedWeight(code.sensitive_area.probabilities, policy.weights.area) *
       expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius) +
@@ -222,6 +253,8 @@ const SPLITTABLE_TYPES = new Set(["feature", "bugfix", "refactor", "chore"]);
 // A score from this share of its threshold up to the threshold is a near miss. It raises nothing
 // and costs nothing, it only tells the reader why a hunk with no finding is still worth a look.
 const NEAR_MISS_SHARE = 0.5;
+// A logic signal is repeated to the reader only when Jev is this sure of it.
+const SIGNAL_SHOWN = 0.7;
 
 export function evaluate(
   hunks: Hunk[],
@@ -231,7 +264,9 @@ export function evaluate(
 ): Findings {
   const judged = hunks.flatMap((hunk) => {
     const answers = judgement.hunks[hunk.id];
-    return answers ? [{ hunk, answers, attention: attention(answers, policy, hunk.isTest) }] : [];
+    if (!answers) return [];
+    const traits = { isTest: hunk.isTest, isProse: isProse(hunk.path) };
+    return [{ hunk, answers, attention: attention(answers, policy, traits) }];
   });
   const confident = (answer: { confidence: number }) =>
     answer.confidence >= policy.thresholds.choiceConfidence;
@@ -276,14 +311,16 @@ export function evaluate(
     };
     const { code, mismatch, custom } = answers;
     const thresholds = policy.thresholds.warnings;
-    warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
+    // Jev scored "safety check weakened" 0.30 on a README. Questions about code are not asked of prose.
+    const isCode = !isProse(hunk.path);
+    if (isCode) warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
     // In a test file a weakened check is a loosened test, which is already its own flag.
-    if (!hunk.isTest) {
+    if (isCode && !hunk.isTest) {
       warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
     }
-    warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
+    if (isCode) warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
     // Changing behaviour is only worth a warning when the hunk presents itself as a refactor.
-    if (claimsRefactor(answers, policy)) {
+    if (isCode && claimsRefactor(answers, policy)) {
       warn(
         "refactor_changes_behaviour",
         code.refactor_changes_behaviour.noul,
@@ -328,6 +365,11 @@ export function evaluate(
       hunkId: entry.hunk.id,
       attention: entry.attention,
       nearMisses: nearMisses.get(entry.hunk.id) ?? [],
+      signals: isProse(entry.hunk.path)
+        ? []
+        : LOGIC_SIGNALS.filter((id) => entry.answers.code[id].noul >= SIGNAL_SHOWN).sort(
+            (a, b) => entry.answers.code[b].noul - entry.answers.code[a].noul,
+          ),
       changeType: sure(entry.answers.code.change_type),
       area: sure(entry.answers.code.sensitive_area),
       blastRadius: sure(entry.answers.code.blast_radius),

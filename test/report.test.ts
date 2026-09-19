@@ -59,7 +59,7 @@ function entry(
   attention: number,
   overrides: Partial<Findings["readingOrder"][number]> = {},
 ): Findings["readingOrder"][number] {
-  return { hunkId, attention, nearMisses: [], changeType: null, area: null, blastRadius: null, ...overrides };
+  return { hunkId, attention, nearMisses: [], signals: [], changeType: null, area: null, blastRadius: null, ...overrides };
 }
 
 function findings(overrides: Partial<Findings> = {}): Findings {
@@ -107,6 +107,11 @@ function jevAnswers(nouls: Record<string, number>, options: { unrelated?: number
       test_loosened: noul("test_loosened"),
       safety_check_weakened: noul("safety_check_weakened"),
       comment_drift: noul("comment_drift"),
+      error_handling_changed: noul("error_handling_changed"),
+      condition_changed: noul("condition_changed"),
+      external_io_added: noul("external_io_added"),
+      shared_state_changed: noul("shared_state_changed"),
+      limit_or_default_changed: noul("limit_or_default_changed"),
       change_type: pick("refactor", 0.91),
       sensitive_area: pick("auth", 0.77),
       blast_radius: pick("end users", 0.64),
@@ -188,7 +193,7 @@ describe("summary comment", () => {
     expect(buildReport(reportInput).summary).toMatchSnapshot();
   });
 
-  test("git-judge did not run", () => {
+  test("git-judge-jev did not run", () => {
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", false)).toMatchSnapshot();
     expect(buildDidNotRunReport("TypeSafe returned 529 Overloaded after 5 attempts.", true).check.conclusion).toBe(
       "failure",
@@ -198,7 +203,12 @@ describe("summary comment", () => {
   test("starts with the marker used to find and update it", () => {
     expect(isSummaryComment(buildReport(CLEAN).summary)).toBe(true);
     expect(isSummaryComment(buildDidNotRunReport("down", false).summary)).toBe(true);
-    expect(isSummaryComment("## git-judge looks nice")).toBe(false);
+    expect(isSummaryComment("## git-judge-jev looks nice")).toBe(false);
+  });
+
+  test("a comment posted under the old project name is still found and updated", () => {
+    expect(isSummaryComment("<!-- git-judge:summary -->\n## git-judge")).toBe(true);
+    expect(isSummaryComment("<!-- someone-else:summary -->")).toBe(false);
   });
 
   test("unflagged hunks are cut to a handful in the comment but complete in the JSON", () => {
@@ -260,7 +270,7 @@ describe("JSON block", () => {
   test("text that would close the HTML comment early is escaped and still round-trips", () => {
     const hostile = "Ends the comment --> <script>alert(1)</script>";
     const report = buildReport(input(findings(), { tldr: hostile, verdicts: [] }));
-    const block = report.summary.slice(report.summary.indexOf("<!-- git-judge:json"));
+    const block = report.summary.slice(report.summary.indexOf("<!-- git-judge-jev:json"));
     expect(block.match(/-->/g)).toHaveLength(1);
     expect(extractJson(report.summary)!.tldr).toBe(hostile);
   });
@@ -440,6 +450,7 @@ describe("one complete comment", () => {
           readingOrder: [
             entry("src/auth/session.ts#0", 2, {
               changeType: "refactor",
+              signals: ["condition_changed", "external_io_added"],
               area: "auth",
               blastRadius: "end users",
               nearMisses: [{ id: "safety_check_weakened", probability: 0.44, threshold: 0.6 }],
@@ -452,7 +463,7 @@ describe("one complete comment", () => {
       ),
     );
     expect(report.summary).toContain(
-      "1. `src/auth/session.ts` L1-13 - refactor, touches auth, end users would notice. Close to a flag: safety check weakened 0.44, flags at 0.6",
+      "1. `src/auth/session.ts` L1-13 - refactor, changes a condition, adds a network, database, or file call, touches auth, end users would notice. Close to a flag: safety check weakened 0.44, flags at 0.6",
     );
     expect(report.summary).toContain("2. `test/invoice.test.ts` L2-6 - other developers would notice\n");
     expect(report.summary).toContain("3. `src/util/format.ts` L10 - chore\n");

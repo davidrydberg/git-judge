@@ -1,4 +1,4 @@
-name: git-judge
+name: git-judge-jev
 description: Tells the reviewer where to look and when a PR's story does not match its diff.
 author: David Rydberg
 

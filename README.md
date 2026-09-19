@@ -1,9 +1,9 @@
-# git-judge
+# git-judge-jev
 
 A GitHub Action that tells the reviewer where to look, and when a pull request's story does not match its diff.
 
 A typical agent-written PR is 30 files, and a handful of them hold the actual change.
-git-judge reads every hunk, sets the mechanical ones aside, and posts one comment: what the PR really does, the few hunks that need a human, and what to verify in each.
+git-judge-jev reads every hunk, sets the mechanical ones aside, and posts one comment: what the PR really does, the few hunks that need a human, and what to verify in each.
 It does not find logic bugs and it does not suggest code.
 
 It is early.
@@ -12,13 +12,13 @@ It runs on its own pull requests in this repo, but the thresholds it ships with 
 ## What you get on a pull request
 
 One comment, updated in place on every push.
-No inline comments and no review entries, so a PR with ten pushes still has one git-judge comment.
+No inline comments and no review entries, so a PR with ten pushes still has one git-judge-jev comment.
 
 | Section | What it holds |
 |---|---|
 | TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
 | Blocking | Gates that fail the check: a possible secret, a destructive data change |
-| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed, what to verify, and the changed lines that show it as a diff block. The writer model picks the lines, git-judge prints them from the diff, so a line the diff does not have is never shown |
+| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed, what to verify, and the changed lines that show it as a diff block. The writer model picks the lines, git-judge-jev prints them from the diff, so a line the diff does not have is never shown |
 | Then read | The next ten hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice (each only where Jev was confident), and any question that came close to a flag, with the hunk's changed lines under it. Built from Jev's answers, no model writes it |
 | Not mentioned in the description | Files with changes the PR text does not cover |
 | Skip | How many hunks were mechanical, lockfile, generated, or vendored |
@@ -28,7 +28,7 @@ No inline comments and no review entries, so a PR with ten pushes still has one 
 The comment ends with the hunk count, duration, and cost of the run.
 The same data is embedded as JSON in a hidden HTML comment and exposed as the `json` output, so another agent can read the findings without reading the diff.
 
-git-judge also applies labels (`area: auth`, `size: M`, `type: refactor`) and removes the ones that no longer apply.
+git-judge-jev also applies labels (`area: auth`, `size: M`, `type: refactor`) and removes the ones that no longer apply.
 The workflow job is the check.
 It fails only on a gate, never on a warning.
 
@@ -50,10 +50,10 @@ TypeSafe's Jev model is in early access behind a waitlist.
 
 1. Add two repository secrets under Settings, Secrets and variables, Actions: `TYPESAFE_API_KEY` and `OPENAI_API_KEY`.
    Add `ANTHROPIC_API_KEY` only if your policy names a Claude model.
-2. Add `.github/workflows/git-judge.yml`:
+2. Add `.github/workflows/git-judge-jev.yml`:
 
 ```yaml
-name: git-judge
+name: git-judge-jev
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, edited]
@@ -64,14 +64,14 @@ permissions:
   issues: write
 
 concurrency:
-  group: git-judge-${{ github.event.pull_request.number }}
+  group: git-judge-jev-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  git-judge:
+  git-judge-jev:
     runs-on: ubuntu-latest
     steps:
-      - uses: davidrydberg/git-judge@main
+      - uses: davidrydberg/git-judge-jev@main
         with:
           typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -79,7 +79,7 @@ jobs:
 
 3. Open a pull request.
 
-No checkout step is needed, git-judge reads the diff through the GitHub API and never runs the PR's code.
+No checkout step is needed, git-judge-jev reads the diff through the GitHub API and never runs the PR's code.
 `edited` re-runs it when the description changes, so fixing the description clears the findings about it.
 The `concurrency` block cancels a run when a newer push arrives, so you do not pay to judge a commit nobody will read.
 A run that still finishes late checks the PR head before posting and writes nothing if the head has moved.
@@ -104,7 +104,7 @@ GitHub gives them no secrets, and running with `pull_request_target` has not had
 | `conclusion` | `success`, `failure`, or `did_not_run` |
 | `json` | The full findings, verdicts, reading order, and raw Jev answers, with the `headSha` that was judged and a stable `id` per finding |
 
-If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge did not run.
+If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge-jev did not run.
 Set `failOnError: true` in the policy to fail instead.
 
 ## How it works
@@ -114,8 +114,12 @@ Set `failOnError: true` in the policy to fail instead.
 2. Jev answers a fixed set of yes/no and multiple-choice questions about each hunk, with calibrated probabilities.
    The questions live in [`src/questions.ts`](src/questions.ts).
    The questions that can fail the check never see the PR description, since a description saying "safe refactor" is exactly what would sway them.
+   Five of them raise no flag and only say what kind of logic changed: error handling, a condition, a network or database call, shared state, a limit or default.
+   They spread the scores of ordinary code apart and become the reason shown beside a hunk.
+   Questions about code are not asked of documentation.
 3. Code, not a model, turns the answers into an attention score, flags, labels, and the check result.
    A gate is a probability against a threshold and nothing else.
+   Warning thresholds are low on purpose: Jev is the recall stage, and the next step is the precision stage.
 4. Only flagged hunks go to a generative model, GPT-5.6 Luna by default, one call per flag.
    It confirms or rejects the flag while reading the code and writes one sentence on what changed and one on what to verify.
    A rejected warning is dropped.
@@ -135,7 +139,7 @@ A 90-hunk pull request takes about ten seconds and costs about one cent.
 
 ## Policy
 
-Every threshold and weight lives in `.git-judge.yml` in the repo root.
+Every threshold and weight lives in `.git-judge-jev.yml` in the repo root.
 The file is optional, and a missing file means the defaults.
 It is read from the base branch, so a PR cannot loosen the policy it is judged by.
 Unknown keys are errors.
@@ -149,8 +153,9 @@ thresholds:
   gates:
     secret_semantic: 0.9
   warnings:
-    test_loosened: 0.7
+    test_loosened: 0.4       # low on purpose, the writer model drops what the code does not show
 weights:
+  logicSignal: 1           # the strongest logic signal p scales area and blast radius by 1 + this * p
   testFile: 0.5            # a hunk in a test file counts area and blast radius at half. A loosened test counts in full
 exclude:
   generated: ["**/*.gen.ts"]
@@ -204,11 +209,26 @@ npm run try -- test/fixtures/mixed.diff "PR title" "PR description"
 
 It prints the comment and posts nothing.
 
+### Measure a change to the judge
+
+`eval/cases/` holds labelled pull requests: a `pr.diff` made by real `git diff`, and a `case.json` naming the hunks a reviewer must read and the flags that are true.
+A hunk is named by its file and a string in its diff.
+
+```sh
+npm run eval -- --label my-change
+npm run eval -- --policy experiment.yml --case real-stale-run-guard
+```
+
+It runs the real pipeline on every case and prints where the must-read hunks ranked, which true flags were raised, and every verdict that is false.
+Every model answer is cached in `eval/.cache` by request, so trying a threshold or a weight costs nothing, and a changed question pays only for itself. The whole suite costs about two cents uncached.
+`--label` saves the result to `eval/results/`, which is committed, so a change can be compared with the run before it.
+Change a question, a weight, or a threshold only with a before and after from this.
+
 ## Release
 
 GitHub runs the committed bundle `dist/index.cjs`.
 Run `npm run build` and commit `dist/` in the same commit as any change under `src/`.
-This repo runs git-judge on its own pull requests from the PR's checkout, so every PR tests its own bundle.
+This repo runs git-judge-jev on its own pull requests from the PR's checkout, so every PR tests its own bundle.
 
 ## License
 

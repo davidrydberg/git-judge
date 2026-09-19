@@ -1,7 +1,7 @@
 {
   "totals": {
     "cases": 8,
-    "recallTop5": 0.7,
+    "recallTop5": 0.9,
     "recallTop10": 0.9,
     "flagRecall": 1,
     "flagPrecision": 0.8571428571428571
@@ -19,7 +19,7 @@
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.001400682
+      "costUsd": 0.0015836340000000002
     },
     {
       "name": "destructive-migration",
@@ -37,7 +37,7 @@
         ],
         "missedFlags": []
       },
-      "costUsd": 0.002050268
+      "costUsd": 0.0021833240000000004
     },
     {
       "name": "loosened-test",
@@ -46,33 +46,33 @@
         "inTop5": 2,
         "inTop10": 2,
         "ranks": [
-          1,
-          2
+          2,
+          1
         ],
         "expectedFlags": 1,
         "truePositives": 1,
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.00168856
+      "costUsd": 0.00236268
     },
     {
       "name": "real-stale-run-guard",
       "score": {
         "mustRead": 3,
-        "inTop5": 0,
+        "inTop5": 2,
         "inTop10": 2,
         "ranks": [
-          7,
-          8,
-          16
+          4,
+          3,
+          14
         ],
         "expectedFlags": 0,
         "truePositives": 0,
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.001401
+      "costUsd": 0.001575636
     },
     {
       "name": "refactor-drops-tenant-filter",
@@ -88,7 +88,7 @@
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.0019760800000000003
+      "costUsd": 0.002150716
     },
     {
       "name": "secret-as-default",
@@ -104,7 +104,7 @@
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.00113169
+      "costUsd": 0.001273062
     },
     {
       "name": "swallowed-payment-error",
@@ -120,7 +120,7 @@
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.0016894800000000001
+      "costUsd": 0.0018558000000000003
     },
     {
       "name": "undescribed-rate-limit",
@@ -136,7 +136,7 @@
         "falsePositives": [],
         "missedFlags": []
       },
-      "costUsd": 0.001889414
+      "costUsd": 0.002055734
     }
   ]
 }

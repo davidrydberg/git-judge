@@ -1,4 +1,4 @@
-// Every question git-judge asks TypeSafe's Jev model, grouped by the call it is sent in.
+// Every question git-judge-jev asks TypeSafe's Jev model, grouped by the call it is sent in.
 // This file is meant to be read and edited without knowing the rest of the pipeline.
 //
 // Rules for wording, from the Jev documentation:
@@ -52,6 +52,33 @@ export const CODE_QUESTIONS = {
     instructions:
       "A comment or docstring in this chunk no longer matches what the code beside it does.",
   },
+  // The five below raise no flag. They say what kind of logic a chunk changes, which spreads the
+  // attention scores of ordinary code apart and gives the reader a reason to open the chunk.
+  error_handling_changed: {
+    type: "noul",
+    instructions:
+      "The changed lines add, remove, or alter a try, catch, throw, error return, retry, or fallback value.",
+  },
+  condition_changed: {
+    type: "noul",
+    instructions:
+      "The changed lines add, remove, or alter the condition of an if, a loop, a filter, or a query's where clause.",
+  },
+  external_io_added: {
+    type: "noul",
+    instructions:
+      "The changed lines add a network request, a database write, a file write, a shell command, or a call to an external service.",
+  },
+  shared_state_changed: {
+    type: "noul",
+    instructions:
+      "The changed lines add or alter a cache, a global or module-level variable, a lock, a transaction, or code that runs concurrently.",
+  },
+  limit_or_default_changed: {
+    type: "noul",
+    instructions:
+      "The changed lines alter a numeric limit, a timeout, a threshold, a default value, or a feature flag.",
+  },
   change_type: {
     type: "choice",
     instructions: "What kind of change is this?",
@@ -66,7 +93,8 @@ export const CODE_QUESTIONS = {
   },
   sensitive_area: {
     type: "choice",
-    instructions: "Which area does this chunk touch?",
+    instructions:
+      "Which area do the changed lines implement? A mention of an area in a comment, a string, a file path, test data, or documentation does not count, answer none for those.",
     criteria: {
       auth: null,
       payments: null,

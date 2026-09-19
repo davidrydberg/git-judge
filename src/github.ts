@@ -1,9 +1,9 @@
 import { getOctokit } from "@actions/github";
 import { isSummaryComment } from "./report.js";
 
-export const POLICY_PATH = ".git-judge.yml";
+export const POLICY_PATH = ".git-judge-jev.yml";
 
-// Label prefixes git-judge owns. Labels with these prefixes are removed when they no longer apply.
+// Label prefixes git-judge-jev owns. Labels with these prefixes are removed when they no longer apply.
 const MANAGED_LABEL = /^(area|size|type): /;
 
 export interface PullRequestRef {

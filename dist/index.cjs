@@ -95570,8 +95570,8 @@ function anthropicGenerator(apiKey, model) {
 
 // src/report.ts
 var import_node_crypto = require("node:crypto");
-var SUMMARY_MARKER = "<!-- git-judge:summary -->";
-var JSON_OPEN = "<!-- git-judge:json";
+var SUMMARY_MARKER = "<!-- git-judge-jev:summary -->";
+var JSON_OPEN = "<!-- git-judge-jev:json";
 var MAX_FLAGGED_LISTED = 15;
 var MAX_UNFLAGGED_LISTED = 10;
 var MAX_FILES_LISTED = 10;
@@ -95720,6 +95720,11 @@ var NOUL_COLUMNS = [
   ["test_loosened", "t.loos"],
   ["safety_check_weakened", "safety"],
   ["comment_drift", "drift"],
+  ["error_handling_changed", "err"],
+  ["condition_changed", "cond"],
+  ["external_io_added", "io"],
+  ["shared_state_changed", "state"],
+  ["limit_or_default_changed", "limit"],
   ["unrelated_to_description", "undesc"]
 ];
 function renderJevTable(json2, jev, prUrl, flagged) {
@@ -95793,9 +95798,17 @@ var AREA_TEXT = {
   data_migration: "data migration",
   public_api: "public API"
 };
+var SIGNAL_TEXT = {
+  error_handling_changed: "changes error handling",
+  condition_changed: "changes a condition",
+  external_io_added: "adds a network, database, or file call",
+  shared_state_changed: "changes shared state",
+  limit_or_default_changed: "changes a limit or default"
+};
 function whyRead(entry) {
   const parts = [];
   if (entry.changeType) parts.push(entry.changeType);
+  for (const signal of entry.signals) parts.push(SIGNAL_TEXT[signal]);
   const area = entry.area ? AREA_TEXT[entry.area] : void 0;
   if (area) parts.push(`touches ${area}`);
   if (entry.blastRadius && entry.blastRadius !== "nobody") parts.push(`${entry.blastRadius} would notice`);
@@ -95818,7 +95831,7 @@ function orderForReading(order, verdicts) {
   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
 }
 function renderSummary(json2, hunks, prUrl, flagged, embedded = json2) {
-  const out = [SUMMARY_MARKER, "## git-judge", ""];
+  const out = [SUMMARY_MARKER, "## git-judge-jev", ""];
   out.push(json2.tldr ? `**TL;DR** ${json2.tldr}` : "Nothing flagged.", "");
   const finding = (verdict, note) => [
     `- **${flagTitle(verdict.flagId)}** (${verdict.severity}) in ${where(verdict, prUrl)}`,
@@ -95904,23 +95917,24 @@ function buildDidNotRunReport(reason, failOnError) {
   return {
     summary: [
       SUMMARY_MARKER,
-      "## git-judge",
+      "## git-judge-jev",
       "",
-      "**git-judge did not run on this push.** This PR has not been judged.",
+      "**git-judge-jev did not run on this push.** This PR has not been judged.",
       "",
       `Reason: ${reason}`,
       "",
       failOnError ? "The check fails because the policy sets `failOnError`." : "The check passes so that an outage does not block the merge."
     ].join("\n"),
-    check: { conclusion, title: "git-judge did not run", summary: reason }
+    check: { conclusion, title: "git-judge-jev did not run", summary: reason }
   };
 }
+var OLD_SUMMARY_MARKER = "<!-- git-judge:summary -->";
 function isSummaryComment(body) {
-  return body.startsWith(SUMMARY_MARKER);
+  return body.startsWith(SUMMARY_MARKER) || body.startsWith(OLD_SUMMARY_MARKER);
 }
 
 // src/github.ts
-var POLICY_PATH = ".git-judge.yml";
+var POLICY_PATH = ".git-judge-jev.yml";
 var MANAGED_LABEL = /^(area|size|type): /;
 function createGitHub(token, pr) {
   const octokit = getOctokit(token);
@@ -96605,6 +96619,28 @@ var CODE_QUESTIONS = {
     type: "noul",
     instructions: "A comment or docstring in this chunk no longer matches what the code beside it does."
   },
+  // The five below raise no flag. They say what kind of logic a chunk changes, which spreads the
+  // attention scores of ordinary code apart and gives the reader a reason to open the chunk.
+  error_handling_changed: {
+    type: "noul",
+    instructions: "The changed lines add, remove, or alter a try, catch, throw, error return, retry, or fallback value."
+  },
+  condition_changed: {
+    type: "noul",
+    instructions: "The changed lines add, remove, or alter the condition of an if, a loop, a filter, or a query's where clause."
+  },
+  external_io_added: {
+    type: "noul",
+    instructions: "The changed lines add a network request, a database write, a file write, a shell command, or a call to an external service."
+  },
+  shared_state_changed: {
+    type: "noul",
+    instructions: "The changed lines add or alter a cache, a global or module-level variable, a lock, a transaction, or code that runs concurrently."
+  },
+  limit_or_default_changed: {
+    type: "noul",
+    instructions: "The changed lines alter a numeric limit, a timeout, a threshold, a default value, or a feature flag."
+  },
   change_type: {
     type: "choice",
     instructions: "What kind of change is this?",
@@ -96619,7 +96655,7 @@ var CODE_QUESTIONS = {
   },
   sensitive_area: {
     type: "choice",
-    instructions: "Which area does this chunk touch?",
+    instructions: "Which area do the changed lines implement? A mention of an area in a comment, a string, a file path, test data, or documentation does not count, answer none for those.",
     criteria: {
       auth: null,
       payments: null,
@@ -96875,6 +96911,10 @@ var LANGUAGES = {
   tf: "Terraform",
   proto: "Protocol Buffers"
 };
+var PROSE = /(\.(md|mdx|txt|rst|adoc)|(^|\/)(LICENSE|NOTICE|AUTHORS|CHANGELOG)[^/]*)$/i;
+function isProse(path5) {
+  return PROSE.test(path5);
+}
 var HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 function parseDiff(diff, options = {}) {
   const classify = pathClassifier(options);
@@ -97032,10 +97072,12 @@ var policySchema = external_exports.strictObject({
       destructive_data: probability.default(0.9)
     }).prefault({}),
     warnings: external_exports.strictObject({
-      test_loosened: probability.default(0.6),
-      safety_check_weakened: probability.default(0.6),
-      refactor_changes_behaviour: probability.default(0.6),
-      comment_drift: probability.default(0.7),
+      // Low on purpose. Jev is the recall stage: the writer reads every flagged hunk and drops a
+      // warning the code does not show, for about $0.0005 a hunk. Gates stay high, nothing clears them.
+      test_loosened: probability.default(0.4),
+      safety_check_weakened: probability.default(0.4),
+      refactor_changes_behaviour: probability.default(0.4),
+      comment_drift: probability.default(0.5),
       unrelated_to_description: probability.default(0.7)
     }).prefault({}),
     /** Warn when the description scores below this. 0 is generic, 2 states what changed and why. */
@@ -97060,7 +97102,9 @@ var policySchema = external_exports.strictObject({
       "money or data": weight.default(2)
     }).prefault({}),
     /** Scales area and blast radius for a hunk in a test file. A loosened test still counts in full. */
-    testFile: weight.default(0.5)
+    testFile: weight.default(0.5),
+    /** How much the strongest logic signal (error handling, condition, IO, shared state, limit) adds: base * (1 + this * p). */
+    logicSignal: weight.default(1)
   }).prefault({}),
   /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
   minAttention: external_exports.number().min(0).default(0.5),
@@ -97099,11 +97143,11 @@ var policySchema = external_exports.strictObject({
 });
 function parsePolicy(yaml) {
   const parsed = policySchema.safeParse((0, import_yaml.parse)(yaml) ?? {});
-  if (!parsed.success) throw new Error(`Invalid git-judge policy:
+  if (!parsed.success) throw new Error(`Invalid git-judge-jev policy:
 ${external_exports.prettifyError(parsed.error)}`);
   const ids = parsed.data.customQuestions.map((question) => question.id);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicate) throw new Error(`Invalid git-judge policy:
+  if (duplicate) throw new Error(`Invalid git-judge-jev policy:
 custom question id "${duplicate}" is used twice`);
   return parsed.data;
 }
@@ -97118,14 +97162,26 @@ function claimsRefactor(answers, policy) {
   const type = answers.code.change_type;
   return type.choice === "refactor" && type.confidence >= policy.thresholds.choiceConfidence;
 }
-function attention(answers, policy, isTest = false) {
+var LOGIC_SIGNALS = [
+  "error_handling_changed",
+  "condition_changed",
+  "external_io_added",
+  "shared_state_changed",
+  "limit_or_default_changed"
+];
+function attention(answers, policy, traits = {}) {
   const { code } = answers;
+  const { isTest = false } = traits;
+  if (traits.isProse) {
+    return (1 - code.mechanical.noul) * expectedWeight(code.sensitive_area.probabilities, policy.weights.area) * expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius);
+  }
   const judgement = Math.max(
     code.test_loosened.noul,
     code.safety_check_weakened.noul,
     claimsRefactor(answers, policy) ? code.refactor_changes_behaviour.noul : 0
   );
-  return (isTest ? policy.weights.testFile : 1) * (1 - code.mechanical.noul) * expectedWeight(code.sensitive_area.probabilities, policy.weights.area) * expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius) + 2 * judgement;
+  const logic = Math.max(...LOGIC_SIGNALS.map((id) => code[id].noul));
+  return (isTest ? policy.weights.testFile : 1) * (1 + policy.weights.logicSignal * logic) * (1 - code.mechanical.noul) * expectedWeight(code.sensitive_area.probabilities, policy.weights.area) * expectedWeight(code.blast_radius.probabilities, policy.weights.blastRadius) + 2 * judgement;
 }
 function expectedWeight(probabilities, weights) {
   let sum = 0;
@@ -97134,10 +97190,13 @@ function expectedWeight(probabilities, weights) {
 }
 var SPLITTABLE_TYPES = /* @__PURE__ */ new Set(["feature", "bugfix", "refactor", "chore"]);
 var NEAR_MISS_SHARE = 0.5;
+var SIGNAL_SHOWN = 0.7;
 function evaluate(hunks, judgement, description, policy) {
   const judged = hunks.flatMap((hunk) => {
     const answers = judgement.hunks[hunk.id];
-    return answers ? [{ hunk, answers, attention: attention(answers, policy, hunk.isTest) }] : [];
+    if (!answers) return [];
+    const traits = { isTest: hunk.isTest, isProse: isProse(hunk.path) };
+    return [{ hunk, answers, attention: attention(answers, policy, traits) }];
   });
   const confident = (answer) => answer.confidence >= policy.thresholds.choiceConfidence;
   const sure = (answer) => confident(answer) ? answer.choice : null;
@@ -97172,12 +97231,13 @@ function evaluate(hunks, judgement, description, policy) {
     };
     const { code, mismatch, custom: custom2 } = answers;
     const thresholds = policy.thresholds.warnings;
-    warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
-    if (!hunk.isTest) {
+    const isCode = !isProse(hunk.path);
+    if (isCode) warn("test_loosened", code.test_loosened.noul, thresholds.test_loosened);
+    if (isCode && !hunk.isTest) {
       warn("safety_check_weakened", code.safety_check_weakened.noul, thresholds.safety_check_weakened);
     }
-    warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
-    if (claimsRefactor(answers, policy)) {
+    if (isCode) warn("comment_drift", code.comment_drift.noul, thresholds.comment_drift);
+    if (isCode && claimsRefactor(answers, policy)) {
       warn(
         "refactor_changes_behaviour",
         code.refactor_changes_behaviour.noul,
@@ -97216,6 +97276,9 @@ function evaluate(hunks, judgement, description, policy) {
       hunkId: entry.hunk.id,
       attention: entry.attention,
       nearMisses: nearMisses.get(entry.hunk.id) ?? [],
+      signals: isProse(entry.hunk.path) ? [] : LOGIC_SIGNALS.filter((id) => entry.answers.code[id].noul >= SIGNAL_SHOWN).sort(
+        (a, b) => entry.answers.code[b].noul - entry.answers.code[a].noul
+      ),
       changeType: sure(entry.answers.code.change_type),
       area: sure(entry.answers.code.sensitive_area),
       blastRadius: sure(entry.answers.code.blast_radius)
@@ -97445,11 +97508,11 @@ async function runPipeline(input2) {
 async function main() {
   const pull = context2.payload.pull_request;
   if (!pull) {
-    setFailed("git-judge only runs on pull_request events.");
+    setFailed("git-judge-jev only runs on pull_request events.");
     return;
   }
   if (pull.head.repo?.full_name !== pull.base.repo.full_name) {
-    notice("git-judge does not run on pull requests from forks yet.");
+    notice("git-judge-jev does not run on pull requests from forks yet.");
     return;
   }
   const github = createGitHub(getInput("github-token", { required: true }), {
@@ -97485,8 +97548,8 @@ async function main() {
     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
     await github.upsertSummary(didNotRun.summary);
     setOutput("conclusion", "did_not_run");
-    if (didNotRun.check.conclusion === "failure") setFailed(`git-judge did not run: ${reason}`);
-    else warning(`git-judge did not run: ${reason}`);
+    if (didNotRun.check.conclusion === "failure") setFailed(`git-judge-jev did not run: ${reason}`);
+    else warning(`git-judge-jev did not run: ${reason}`);
     return;
   }
   if (await skipIfStale(github)) return;

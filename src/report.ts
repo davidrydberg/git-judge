@@ -4,8 +4,8 @@ import type { HunkAnswers, Judgement } from "./judge.js";
 import type { Findings, PrWarning } from "./policy.js";
 import type { Verdict, Written } from "./writer.js";
 
-export const SUMMARY_MARKER = "<!-- git-judge:summary -->";
-const JSON_OPEN = "<!-- git-judge:json";
+export const SUMMARY_MARKER = "<!-- git-judge-jev:summary -->";
+const JSON_OPEN = "<!-- git-judge-jev:json";
 const MAX_FLAGGED_LISTED = 15;
 const MAX_UNFLAGGED_LISTED = 10;
 const MAX_FILES_LISTED = 10;
@@ -37,7 +37,7 @@ export interface ReportInput {
   headSha?: string | undefined;
 }
 
-// git-judge posts exactly one comment per PR and updates it in place. It posts no inline review
+// git-judge-jev posts exactly one comment per PR and updates it in place. It posts no inline review
 // comments: each push would add a review to the timeline and a notification per comment.
 export interface Report {
   summary: string;
@@ -240,6 +240,11 @@ const NOUL_COLUMNS: [id: string, heading: string][] = [
   ["test_loosened", "t.loos"],
   ["safety_check_weakened", "safety"],
   ["comment_drift", "drift"],
+  ["error_handling_changed", "err"],
+  ["condition_changed", "cond"],
+  ["external_io_added", "io"],
+  ["shared_state_changed", "state"],
+  ["limit_or_default_changed", "limit"],
   ["unrelated_to_description", "undesc"],
 ];
 
@@ -338,11 +343,20 @@ const AREA_TEXT: Record<string, string> = {
   public_api: "public API",
 };
 
+const SIGNAL_TEXT: Record<string, string> = {
+  error_handling_changed: "changes error handling",
+  condition_changed: "changes a condition",
+  external_io_added: "adds a network, database, or file call",
+  shared_state_changed: "changes shared state",
+  limit_or_default_changed: "changes a limit or default",
+};
+
 // Why an unflagged hunk is on the list, from answers Jev already gave. No model writes this.
 // Policy has already dropped the picks Jev was not confident in, so a guess is never stated as a fact.
 function whyRead(entry: ReportJson["readingOrder"][number]): string {
   const parts: string[] = [];
   if (entry.changeType) parts.push(entry.changeType);
+  for (const signal of entry.signals) parts.push(SIGNAL_TEXT[signal]!);
   const area = entry.area ? AREA_TEXT[entry.area] : undefined;
   if (area) parts.push(`touches ${area}`);
   if (entry.blastRadius && entry.blastRadius !== "nobody") parts.push(`${entry.blastRadius} would notice`);
@@ -383,7 +397,7 @@ function renderSummary(
   /** What goes in the hidden block. The visible comment is always rendered from the full `json`. */
   embedded: ReportJson = json,
 ): string {
-  const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
+  const out: string[] = [SUMMARY_MARKER, "## git-judge-jev", ""];
   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
 
   // Markdown folds the lines of a list item into one paragraph, so the breaks are explicit.
@@ -485,9 +499,9 @@ export function buildDidNotRunReport(reason: string, failOnError: boolean): Pick
   return {
     summary: [
       SUMMARY_MARKER,
-      "## git-judge",
+      "## git-judge-jev",
       "",
-      "**git-judge did not run on this push.** This PR has not been judged.",
+      "**git-judge-jev did not run on this push.** This PR has not been judged.",
       "",
       `Reason: ${reason}`,
       "",
@@ -495,12 +509,15 @@ export function buildDidNotRunReport(reason: string, failOnError: boolean): Pick
         ? "The check fails because the policy sets `failOnError`."
         : "The check passes so that an outage does not block the merge.",
     ].join("\n"),
-    check: { conclusion, title: "git-judge did not run", summary: reason },
+    check: { conclusion, title: "git-judge-jev did not run", summary: reason },
   };
 }
 
+// The project was called git-judge first. A comment it posted under that name is still ours to update.
+const OLD_SUMMARY_MARKER = "<!-- git-judge:summary -->";
+
 export function isSummaryComment(body: string): boolean {
-  return body.startsWith(SUMMARY_MARKER);
+  return body.startsWith(SUMMARY_MARKER) || body.startsWith(OLD_SUMMARY_MARKER);
 }
 
 export function extractJson(summary: string): ReportJson | null {

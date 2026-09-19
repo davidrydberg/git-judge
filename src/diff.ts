@@ -139,6 +139,13 @@ const LANGUAGES: Record<string, string> = {
   proto: "Protocol Buffers",
 };
 
+const PROSE = /(\.(md|mdx|txt|rst|adoc)|(^|\/)(LICENSE|NOTICE|AUTHORS|CHANGELOG)[^/]*)$/i;
+
+/** Documentation and other prose, by path. Questions about code have no meaning there. */
+export function isProse(path: string): boolean {
+  return PROSE.test(path);
+}
+
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseDiff(diff: string, options: DiffOptions = {}): ParsedDiff {
