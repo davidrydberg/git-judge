@@ -1,0 +1,10 @@
+{
+  "title": "Tie the report to its commit, give findings stable ids, drop stale runs",
+  "description": "The JSON gains headSha, the commit that was judged, and every finding gains an id hashed from its flag, file, and changed lines. Before posting, the run re-reads the PR head and posts nothing if it moved. The workflow cancels superseded runs. The README no longer implies minAttention: 0 gives every hunk a generative second look. The stale-run guard is in the untested adapters and has not run live.",
+  "mustRead": [
+    { "path": "src/action.ts", "contains": "async function skipIfStale" },
+    { "path": "src/github.ts", "contains": "async headMoved()" },
+    { "path": "src/report.ts", "contains": "function findingId" }
+  ],
+  "flags": []
+}

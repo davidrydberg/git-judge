@@ -1,0 +1,905 @@
+diff --git a/.github/workflows/git-judge.yml b/.github/workflows/git-judge.yml
+index d2d95f6..31f48ed 100644
+--- a/.github/workflows/git-judge.yml
++++ b/.github/workflows/git-judge.yml
+@@ -10,6 +10,10 @@ permissions:
+   pull-requests: write
+   issues: write
+ 
++concurrency:
++  group: git-judge-${{ github.event.pull_request.number }}
++  cancel-in-progress: true
++
+ jobs:
+   git-judge:
+     runs-on: ubuntu-latest
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..62065bb
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 David Rydberg
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/README.md b/README.md
+index 550a57f..0e91f1e 100644
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,56 @@
+-# README
++# git-judge
+ 
+-A GitHub Action that tells the reviewer where to look and when a PR's story does not match its diff.
++A GitHub Action that tells the reviewer where to look, and when a pull request's story does not match its diff.
+ 
+-On every push to a PR it ranks each hunk by how much human attention it deserves, flags a small fixed set of things only judgement can catch, and posts one comment with the complete report: the findings, what to verify for each, and a reading order.
+-The comment is updated in place on every push, and git-judge posts no inline comments.
+-It does not find logic bugs and does not suggest code.
++A typical agent-written PR is 30 files, and a handful of them hold the actual change.
++git-judge reads every hunk, sets the mechanical ones aside, and posts one comment: what the PR really does, the few hunks that need a human, and what to verify in each.
++It does not find logic bugs and it does not suggest code.
+ 
+-Status: the whole pipeline is built and tested with fake clients.
+-It has not yet run against the real TypeSafe, OpenAI, or GitHub APIs.
++It is early.
++It runs on its own pull requests in this repo, but the thresholds it ships with are guesses.
+ 
+-## Install it in a repo
++## What you get on a pull request
+ 
+-Add three repository secrets: `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` only if you configure escalation.
+-Then add `.github/workflows/git-judge.yml`:
++One comment, updated in place on every push.
++No inline comments and no review entries, so a PR with ten pushes still has one git-judge comment.
++
++| Section | What it holds |
++|---|---|
++| TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
++| Blocking | Gates that fail the check: a possible secret, a destructive data change |
++| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed and what to verify |
++| Then read | The next five hunks by attention, linked |
++| Not mentioned in the description | Files with changes the PR text does not cover |
++| Skip | How many hunks were mechanical, lockfile, generated, or vendored |
++| Notes | A weak or missing description, missing tests, a suggestion to split the PR |
++| Jev answers | Collapsed table of every raw answer per hunk, the value that raised a flag in bold |
++
++The comment ends with the hunk count, duration, and cost of the run.
++The same data is embedded as JSON in a hidden HTML comment and exposed as the `json` output, so another agent can read the findings without reading the diff.
++
++git-judge also applies labels (`area: auth`, `size: M`, `type: refactor`) and removes the ones that no longer apply.
++The workflow job is the check.
++It fails only on a gate, never on a warning.
++
++The findings it looks for:
++
++- A test made to pass by loosening or removing an assertion.
++- Validation, error handling, a permission check, or a limit removed or weakened.
++- A change presented as a refactor that alters behaviour.
++- A comment that no longer matches the code beside it.
++- Changes the PR description does not mention.
++- Gate: a credential, key, or token in the added lines.
++- Gate: a table or column deleted, renamed, or truncated, or stored data rewritten.
++- Your own yes/no questions from the policy file.
++
++## Install
++
++You need a [TypeSafe](https://typesafe.ai) API key and an OpenAI API key.
++TypeSafe's Jev model is in early access behind a waitlist.
++
++1. Add two repository secrets under Settings, Secrets and variables, Actions: `TYPESAFE_API_KEY` and `OPENAI_API_KEY`.
++   Add `ANTHROPIC_API_KEY` only if your policy names a Claude model.
++2. Add `.github/workflows/git-judge.yml`:
+ 
+ ```yaml
+ name: git-judge
+@@ -25,6 +63,10 @@ permissions:
+   pull-requests: write
+   issues: write
+ 
++concurrency:
++  group: git-judge-${{ github.event.pull_request.number }}
++  cancel-in-progress: true
++
+ jobs:
+   git-judge:
+     runs-on: ubuntu-latest
+@@ -35,35 +77,107 @@ jobs:
+           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+ ```
+ 
++3. Open a pull request.
++
++No checkout step is needed, git-judge reads the diff through the GitHub API and never runs the PR's code.
++`edited` re-runs it when the description changes, so fixing the description clears the findings about it.
++The `concurrency` block cancels a run when a newer push arrives, so you do not pay to judge a commit nobody will read.
++A run that still finishes late checks the PR head before posting and writes nothing if the head has moved.
++There are no releases yet, so `@main` is the only ref.
++Pin a commit SHA instead if you do not want to follow `main`.
++
+ Pull requests from forks are skipped.
++GitHub gives them no secrets, and running with `pull_request_target` has not had a security review.
++
++### Inputs and outputs
++
++| Input | Required | |
++|---|---|---|
++| `typesafe-api-key` | yes | Judges every hunk with Jev |
++| `openai-api-key` | when the writer model is an OpenAI model, which is the default | Confirms findings and writes the text |
++| `anthropic-api-key` | when the policy names a Claude model | Same, for Claude |
++| `github-token` | no, defaults to the workflow token | Reads the diff, writes the comment and labels |
++
++| Output | |
++|---|---|
++| `conclusion` | `success`, `failure`, or `did_not_run` |
++| `json` | The full findings, verdicts, reading order, and raw Jev answers, with the `headSha` that was judged and a stable `id` per finding |
++
++If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge did not run.
++Set `failOnError: true` in the policy to fail instead.
++
++## How it works
++
++1. The diff is split into hunks.
++   Lockfiles, generated files, and vendored code are set aside by path and are never sent anywhere.
++2. Jev answers a fixed set of yes/no and multiple-choice questions about each hunk, with calibrated probabilities.
++   The questions live in [`src/questions.ts`](src/questions.ts).
++   The questions that can fail the check never see the PR description, since a description saying "safe refactor" is exactly what would sway them.
++3. Code, not a model, turns the answers into an attention score, flags, labels, and the check result.
++   A gate is a probability against a threshold and nothing else.
++4. Only flagged hunks go to a generative model, GPT-5.6 Luna by default, one call per flag.
++   It confirms or rejects the flag while reading the code and writes one sentence on what changed and one on what to verify.
++   A rejected warning is dropped.
++   A gate is kept either way, the writer model cannot clear one.
++5. One more call writes the TL;DR from the title, the file list with Jev's change type per file, and the confirmed findings.
++   It never sees the diff.
++
++A 90-hunk pull request takes about ten seconds and costs about one cent.
++
++### What is sent where
++
++| To | What |
++|---|---|
++| TypeSafe | Every hunk that is not a lockfile, generated, or vendored, with its file path. Also the PR title, description, and list of changed files |
++| OpenAI, or Anthropic if configured | Only hunks that raised a flag, with the PR description. Also the title and file paths for the TL;DR |
++| Neither | A hunk flagged as a possible secret is never sent to the writer model, it has already gone to one vendor |
+ 
+ ## Policy
+ 
+ Every threshold and weight lives in `.git-judge.yml` in the repo root.
+ The file is optional, and a missing file means the defaults.
+-git-judge reads it from the base branch, so a PR cannot loosen the policy it is judged by.
++It is read from the base branch, so a PR cannot loosen the policy it is judged by.
++Unknown keys are errors.
+ The schema with every default is at the top of [`src/policy.ts`](src/policy.ts).
+ 
+ ```yaml
+-minAttention: 0.5          # 0 sends every hunk to the writer model
++minAttention: 0.5          # hunks scoring below this count as mechanical. 0 keeps every hunk
++minDescriptionLength: 30   # shorter than this and the description counts as missing
++maxHunks: 200
+ thresholds:
++  gates:
++    secret_semantic: 0.9
+   warnings:
+     test_loosened: 0.7
++exclude:
++  generated: ["**/*.gen.ts"]
++  vendored: ["third_party/**"]
+ generator:
++  model: gpt-5.6-luna
+   escalation:              # off unless present
++    model: claude-opus-5
+     areas: [auth, payments]
+ customQuestions:
+   - id: invoicing
+     question: This chunk touches invoicing.
++    threshold: 0.6
+     label: touches-invoicing
++failOnError: false
+ ```
+ 
+-The shipped thresholds are guesses.
+-Jev's calibration differs per repo and per language, so expect to tune them.
++A custom question raises a warning and a label.
++It can never fail the check.
++
++## Limits you should know
+ 
+-A hunk that Jev marks mechanical is never read by a generative model.
+-A subtle bug inside such a hunk gets no second look.
+-Set `minAttention: 0` if you want every hunk read.
++- The shipped thresholds are guesses. Jev's calibration differs per repo and per language, so expect to tune them. The Jev answers table in the comment is there to help with that.
++- A generative model reads only flagged hunks. A subtle bug in a hunk that raised no flag gets no second look, at any setting.
++- A hunk scoring under `minAttention` is left out of the reading order and can raise a gate but no warning. Set `minAttention: 0` to rank every hunk and let every warning fire on it.
++- The area and type labels are often wrong on small PRs.
++- A PR over GitHub's diff limit, about 300 files, ends as "did not run".
++- A hunk too large for Jev's context is judged on its first part only and listed as such in the comment.
++- Jev works best on English and on high-level languages.
++- Jev does not treat its input as hostile. Code comments can sway it. That is why gates never see the description and why the writer model re-reads the code.
+ 
+ ## Develop
+ 
+@@ -77,10 +191,22 @@ npm run lint
+ npm run build
+ ```
+ 
+-No test needs an API key.
++No test needs an API key or the network.
++
++To run the real pipeline on a local diff, put `TYPESAFE_API_KEY` and `OPENAI_API_KEY` in a `.env` file, which git ignores, and run:
+ 
+-## Deploy
++```sh
++npm run try -- test/fixtures/mixed.diff "PR title" "PR description"
++```
++
++It prints the comment and posts nothing.
++
++## Release
+ 
+ GitHub runs the committed bundle `dist/index.cjs`.
+ Run `npm run build` and commit `dist/` in the same commit as any change under `src/`.
+-A release is a tag on a commit whose `dist/` is current.
++This repo runs git-judge on its own pull requests from the PR's checkout, so every PR tests its own bundle.
++
++## License
++
++MIT
+diff --git a/src/action.ts b/src/action.ts
+index 9d44215..3dd6369 100644
+--- a/src/action.ts
++++ b/src/action.ts
+@@ -1,7 +1,7 @@
+ import * as core from "@actions/core";
+ import { context } from "@actions/github";
+ import { createGenerator } from "./generators.js";
+-import { createGitHub } from "./github.js";
++import { createGitHub, type GitHub } from "./github.js";
+ import { createJudgeClient } from "./judge.js";
+ import { runPipeline } from "./pipeline.js";
+ import { parsePolicy } from "./policy.js";
+@@ -24,6 +24,7 @@ async function main(): Promise<void> {
+     repo: context.repo.repo,
+     number: pull.number,
+     baseSha: pull.base.sha,
++    headSha: pull.head.sha,
+   });
+ 
+   // A broken policy file is the maintainer's bug, not an outage. It fails loudly instead of passing quietly.
+@@ -46,9 +47,11 @@ async function main(): Promise<void> {
+       escalationGenerator: escalation ? createGenerator(escalation.model, keys) : undefined,
+       now: Date.now,
+       prUrl: pull.html_url,
++      headSha: pull.head.sha,
+     });
+   } catch (error) {
+     const reason = error instanceof Error ? error.message : String(error);
++    if (await skipIfStale(github)) return;
+     const didNotRun = buildDidNotRunReport(reason, policy.failOnError);
+     await github.upsertSummary(didNotRun.summary);
+     core.setOutput("conclusion", "did_not_run");
+@@ -57,6 +60,7 @@ async function main(): Promise<void> {
+     return;
+   }
+ 
++  if (await skipIfStale(github)) return;
+   await github.upsertSummary(report.summary);
+   await github.syncLabels(report.labels);
+   core.setOutput("conclusion", report.check.conclusion);
+@@ -65,6 +69,13 @@ async function main(): Promise<void> {
+   else core.info(report.check.title);
+ }
+ 
++async function skipIfStale(github: GitHub): Promise<boolean> {
++  if (!(await github.headMoved())) return false;
++  core.notice("The pull request has a newer commit. This run posts nothing, the run for that commit will.");
++  core.setOutput("conclusion", "did_not_run");
++  return true;
++}
++
+ main().catch((error: unknown) => {
+   core.setFailed(error instanceof Error ? error.message : String(error));
+ });
+diff --git a/src/github.ts b/src/github.ts
+index a22ab3c..04b87ab 100644
+--- a/src/github.ts
++++ b/src/github.ts
+@@ -11,11 +11,14 @@ export interface PullRequestRef {
+   repo: string;
+   number: number;
+   baseSha: string;
++  headSha: string;
+ }
+ 
+ export interface GitHub {
+   fetchDiff(): Promise<string>;
+   fetchPolicy(): Promise<string>;
++  /** True when the PR has a newer head than the one this run judged. */
++  headMoved(): Promise<boolean>;
+   upsertSummary(body: string): Promise<void>;
+   syncLabels(labels: string[]): Promise<void>;
+ }
+@@ -51,6 +54,12 @@ export function createGitHub(token: string, pr: PullRequestRef): GitHub {
+       }
+     },
+ 
++    // Runs finish out of order. A run that lost the race must not write its report over a newer one.
++    async headMoved() {
++      const response = await octokit.rest.pulls.get({ ...repo, pull_number: pr.number });
++      return response.data.head.sha !== pr.headSha;
++    },
++
+     async upsertSummary(body) {
+       const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+         ...repo,
+diff --git a/src/pipeline.ts b/src/pipeline.ts
+index 04454e8..871639a 100644
+--- a/src/pipeline.ts
++++ b/src/pipeline.ts
+@@ -15,6 +15,7 @@ export interface PipelineInput {
+   /** Milliseconds clock, injected so the reported duration is testable. */
+   now: () => number;
+   prUrl?: string | undefined;
++  headSha?: string | undefined;
+ }
+ 
+ /** Diff in, report out. Touches no network except through the injected clients. */
+@@ -53,5 +54,5 @@ export async function runPipeline(input: PipelineInput): Promise<Report> {
+     generator: input.generator,
+     escalationGenerator: input.escalationGenerator,
+   });
+-  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started, prUrl: input.prUrl });
++  return buildReport({ hunks, findings, written, judgement, durationMs: input.now() - started, prUrl: input.prUrl, headSha: input.headSha });
+ }
+diff --git a/src/policy.ts b/src/policy.ts
+index 06b7743..1408f68 100644
+--- a/src/policy.ts
++++ b/src/policy.ts
+@@ -59,7 +59,7 @@ const policySchema = z.strictObject({
+         .prefault({}),
+     })
+     .prefault({}),
+-  /** Hunks scoring below this are counted as mechanical. Set to 0 to review every hunk. */
++  /** Hunks scoring below this are counted as mechanical. Set to 0 to rank every hunk and let every warning fire on it. */
+   minAttention: z.number().min(0).default(0.5),
+   /** Below this many characters the description is treated as missing. */
+   minDescriptionLength: z.number().int().min(0).default(30),
+diff --git a/src/report.ts b/src/report.ts
+index bdf3516..0b67878 100644
+--- a/src/report.ts
++++ b/src/report.ts
+@@ -1,6 +1,6 @@
+ import { createHash } from "node:crypto";
+ import type { Anchor, Hunk } from "./diff.js";
+-import type { Judgement } from "./judge.js";
++import type { HunkAnswers, Judgement } from "./judge.js";
+ import type { Findings, PrWarning } from "./policy.js";
+ import type { Verdict, Written } from "./writer.js";
+ 
+@@ -9,6 +9,9 @@ const JSON_OPEN = "<!-- git-judge:json";
+ const MAX_FLAGGED_LISTED = 15;
+ const MAX_UNFLAGGED_LISTED = 5;
+ const MAX_FILES_LISTED = 10;
++const MAX_TABLE_ROWS = 60;
++// GitHub rejects a comment over 65,536 characters. Past this size the raw answers leave the JSON block.
++const MAX_COMMENT_CHARS = 60_000;
+ // A statement about the PR rather than about a line, so it is reported once with its files
+ // and not per hunk. One PR raised it on 18 hunks with the same sentence.
+ const PR_LEVEL_FLAG = "unrelated_to_description";
+@@ -25,10 +28,12 @@ export interface ReportInput {
+   hunks: Hunk[];
+   findings: Findings;
+   written: Written;
+-  judgement: Pick<Judgement, "model" | "inputTokens">;
++  judgement: Pick<Judgement, "model" | "inputTokens" | "hunks" | "pr">;
+   durationMs: number;
+   /** For example https://github.com/owner/repo/pull/12. With it, every location links to its line in the diff. */
+   prUrl?: string | undefined;
++  /** The commit the diff was read at. It ties the report to what was judged. */
++  headSha?: string | undefined;
+ }
+ 
+ // git-judge posts exactly one comment per PR and updates it in place. It posts no inline review
+@@ -43,10 +48,15 @@ export interface Report {
+ 
+ export interface ReportJson {
+   version: 1;
++  /** The commit this report describes, or null when the caller did not say. */
++  headSha: string | null;
+   conclusion: "success" | "failure";
+   tldr: string | null;
+-  verdicts: (Verdict & Location)[];
++  /** `id` survives a push that leaves the flagged lines alone, so a reader can tell a standing finding from a new one. */
++  verdicts: (Verdict & Location & { id: string })[];
+   readingOrder: ({ hunkId: string; attention: number } & Location)[];
++  /** Every raw Jev answer, per judged hunk and for the PR. Dropped only if the comment would be too large. */
++  jev: { hunks: Record<string, JevRow>; pr: { descriptionQuality: number; testsCoverChange: number } } | null;
+   prWarnings: PrWarning[];
+   skipped: Findings["skipped"];
+   lowCoverage: string[];
+@@ -56,6 +66,17 @@ export interface ReportJson {
+   durationMs: number;
+ }
+ 
++type Chosen = { choice: string; confidence: number };
++
++/** One judged hunk: the probability of yes per noul, and the pick with its confidence per choice. */
++export interface JevRow extends Location {
++  nouls: Record<string, number>;
++  changeType: Chosen;
++  sensitiveArea: Chosen;
++  blastRadius: Chosen;
++  lowCoverage: boolean;
++}
++
+ interface Location {
+   path: string;
+   startLine: number;
+@@ -119,15 +140,36 @@ export function buildReport(input: ReportInput): Report {
+     return hunk;
+   };
+ 
++  const seen = new Map<string, number>();
+   const json: ReportJson = {
+     version: 1,
++    headSha: input.headSha ?? null,
+     conclusion: findings.conclusion,
+     tldr: written.tldr,
+-    verdicts: written.verdicts.map((verdict) => ({ ...verdict, ...locationOf(hunkOf(verdict.hunkId)) })),
++    verdicts: written.verdicts.map((verdict) => {
++      const hunk = hunkOf(verdict.hunkId);
++      const id = findingId(verdict.flagId, hunk);
++      const count = (seen.get(id) ?? 0) + 1;
++      seen.set(id, count);
++      // The same edit twice in one file hashes the same, so the later one is numbered.
++      return { id: count === 1 ? id : `${id}-${count}`, ...verdict, ...locationOf(hunk) };
++    }),
+     readingOrder: orderForReading(findings.readingOrder, written.verdicts).map((entry) => ({
+       ...entry,
+       ...locationOf(hunkOf(entry.hunkId)),
+     })),
++    jev: {
++      hunks: Object.fromEntries(
++        input.hunks.flatMap((hunk) => {
++          const answers = input.judgement.hunks[hunk.id];
++          return answers ? [[hunk.id, jevRow(hunk, answers)]] : [];
++        }),
++      ),
++      pr: {
++        descriptionQuality: input.judgement.pr.description_quality.score,
++        testsCoverChange: input.judgement.pr.tests_cover_change.noul,
++      },
++    },
+     prWarnings: findings.prWarnings,
+     skipped: findings.skipped,
+     lowCoverage: findings.lowCoverage,
+@@ -139,7 +181,7 @@ export function buildReport(input: ReportInput): Report {
+ 
+   const gates = json.verdicts.filter((verdict) => verdict.kind === "gate");
+   return {
+-    summary: renderSummary(json, input.hunks.length, input.prUrl),
++    summary: renderWithinLimit(json, input),
+     labels: findings.labels,
+     check: {
+       conclusion: findings.conclusion,
+@@ -155,6 +197,101 @@ export function buildReport(input: ReportInput): Report {
+   };
+ }
+ 
++function renderWithinLimit(json: ReportJson, input: ReportInput): string {
++  const flagged = new Set(input.findings.flags.map((flag) => `${flag.hunkId}|${flag.id}`));
++  const full = renderSummary(json, input.hunks.length, input.prUrl, flagged);
++  if (full.length <= MAX_COMMENT_CHARS) return full;
++  // The table keeps its row cap, so what grows without bound is the JSON. The raw answers go first.
++  return renderSummary({ ...json, jev: null }, input.hunks.length, input.prUrl, flagged, json.jev);
++}
++
++function jevRow(hunk: Hunk, answers: HunkAnswers): JevRow {
++  const { code, mismatch, custom } = answers;
++  const chosen = (answer: Chosen): Chosen => ({ choice: answer.choice, confidence: answer.confidence });
++  const nouls: Record<string, number> = {};
++  for (const [id, answer] of Object.entries(code)) if (answer.type === "noul") nouls[id] = answer.noul;
++  if (mismatch) nouls.unrelated_to_description = mismatch.unrelated_to_description.noul;
++  for (const [id, value] of Object.entries(custom)) nouls[`custom:${id}`] = value;
++  return {
++    ...locationOf(hunk),
++    nouls,
++    changeType: chosen(code.change_type),
++    sensitiveArea: chosen(code.sensitive_area),
++    blastRadius: chosen(code.blast_radius),
++    lowCoverage: answers.lowCoverage,
++  };
++}
++
++const NOUL_COLUMNS: [id: string, heading: string][] = [
++  ["mechanical", "mech"],
++  ["secret_semantic", "secret"],
++  ["destructive_data", "destr"],
++  ["refactor_changes_behaviour", "behav"],
++  ["test_loosened", "t.loos"],
++  ["safety_check_weakened", "safety"],
++  ["comment_drift", "drift"],
++  ["unrelated_to_description", "undesc"],
++];
++
++/** Every answer Jev gave, one row per judged hunk, most important first. Bold marks a value that raised a flag. */
++function renderJevTable(
++  json: ReportJson,
++  jev: NonNullable<ReportJson["jev"]>,
++  prUrl: string | undefined,
++  flagged: Set<string>,
++): string[] {
++  const ids = json.readingOrder.map((entry) => entry.hunkId).filter((id) => jev.hunks[id]);
++  for (const id of Object.keys(jev.hunks)) if (!ids.includes(id)) ids.push(id);
++  if (ids.length === 0) return [];
++
++  const attention = new Map(json.readingOrder.map((entry) => [entry.hunkId, entry.attention]));
++  const custom = [...new Set(ids.flatMap((id) => Object.keys(jev.hunks[id]?.nouls ?? {})))].filter((id) =>
++    id.startsWith("custom:"),
++  );
++  const columns: [string, string][] = [...NOUL_COLUMNS, ...custom.map((id): [string, string] => [id, id.slice(7)])];
++  const pick = (chosen: Chosen) => `${chosen.choice} ${chosen.confidence.toFixed(2)}`;
++
++  const rows = ids.slice(0, MAX_TABLE_ROWS).flatMap((id) => {
++    const row = jev.hunks[id];
++    if (!row) return [];
++    const cells = columns.map(([column]) => {
++      const value = row.nouls[column];
++      if (value === undefined) return "-";
++      return flagged.has(`${id}|${column}`) ? `**${value.toFixed(2)}**` : value.toFixed(2);
++    });
++    const score = attention.get(id);
++    return [
++      `| ${where(row, prUrl)}${row.lowCoverage ? " (cut)" : ""} | ${score === undefined ? "skip" : score.toFixed(2)} | ${cells.join(" | ")} | ${pick(row.changeType)} | ${pick(row.sensitiveArea)} | ${pick(row.blastRadius)} |`,
++    ];
++  });
++
++  const more = ids.length - rows.length;
++  return [
++    "<details>",
++    `<summary>Jev answers for ${plural(ids.length, "hunk")}</summary>`,
++    "",
++    "Probability of yes per question, and Jev's pick with its confidence for type, area, and blast radius.",
++    "`attn` is the attention score, `skip` means below the cutoff. Bold raised a flag. `undesc` is `-` when the description was too short to compare.",
++    "",
++    `| hunk | attn | ${columns.map(([, heading]) => heading).join(" | ")} | type | area | blast |`,
++    `|---|---|${columns.map(() => "---").join("|")}|---|---|---|`,
++    ...rows,
++    "",
++    ...(more > 0 ? [`And ${plural(more, "more hunk")}, in the JSON block of this comment.`, ""] : []),
++    `PR level: description quality ${jev.pr.descriptionQuality.toFixed(2)} of 2, tests cover the change ${jev.pr.testsCoverChange.toFixed(2)}.`,
++    "",
++    "</details>",
++    "",
++  ];
++}
++
++// The hunk id is a position in the diff and moves when a push adds a hunk above it. This id is the
++// flag, the file, and the changed lines only, so it moves only when the flagged code itself does.
++function findingId(flagId: string, hunk: Hunk): string {
++  const changed = hunk.content.split("\n").filter((line) => /^[+-]/.test(line));
++  return createHash("sha256").update([flagId, hunk.path, ...changed].join("\n")).digest("hex").slice(0, 12);
++}
++
+ function locationOf(hunk: Hunk): Location {
+   return { path: hunk.path, startLine: hunk.startLine, endLine: hunk.endLine, anchor: hunk.anchor };
+ }
+@@ -181,7 +318,13 @@ function orderForReading(order: Findings["readingOrder"], verdicts: Verdict[]):
+   return [...order].sort((a, b) => rank(a.hunkId) - rank(b.hunkId) || b.attention - a.attention);
+ }
+ 
+-function renderSummary(json: ReportJson, hunkCount: number, prUrl: string | undefined): string {
++function renderSummary(
++  json: ReportJson,
++  hunkCount: number,
++  prUrl: string | undefined,
++  flagged: Set<string>,
++  tableData: ReportJson["jev"] = json.jev,
++): string {
+   const out: string[] = [SUMMARY_MARKER, "## git-judge", ""];
+   out.push(json.tldr ? `**TL;DR** ${json.tldr}` : "Nothing flagged.", "");
+ 
+@@ -266,8 +409,11 @@ function renderSummary(json: ReportJson, hunkCount: number, prUrl: string | unde
+   }
+   if (notes.length > 0) out.push("### Notes", "", ...notes.map((note) => `- ${note}`), "");
+ 
++  if (tableData) out.push(...renderJevTable(json, tableData, prUrl, flagged));
++
+   const cost = json.costUsd === null ? "cost unknown" : `about $${json.costUsd.toFixed(4)}`;
+-  out.push("---", `<sub>${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
++  const commit = json.headSha ? `judged at ${json.headSha.slice(0, 7)} | ` : "";
++  out.push("---", `<sub>${commit}${plural(hunkCount, "hunk")} | ${(json.durationMs / 1000).toFixed(1)} s | ${cost} | ${json.models.join(", ")}</sub>`);
+ 
+   // "-->" inside the JSON would end the HTML comment early. The escaped form parses to the same character.
+   out.push("", JSON_OPEN, JSON.stringify(json).replaceAll("-->", "--\\u003e"), "-->");
+diff --git a/test/__snapshots__/report.test.ts.snap b/test/__snapshots__/report.test.ts.snap
+index f3e952d..17f9831 100644
+--- a/test/__snapshots__/report.test.ts.snap
++++ b/test/__snapshots__/report.test.ts.snap
+@@ -1,5 +1,23 @@
+ // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+ 
++exports[`Jev answers table > is collapsed, one row per judged hunk, reading order first, then the skipped ones 1`] = `
++"<details>
++<summary>Jev answers for 3 hunks</summary>
++
++Probability of yes per question, and Jev's pick with its confidence for type, area, and blast radius.
++\`attn\` is the attention score, \`skip\` means below the cutoff. Bold raised a flag. \`undesc\` is \`-\` when the description was too short to compare.
++
++| hunk | attn | mech | secret | destr | behav | t.loos | safety | drift | undesc | invoicing | type | area | blast |
++|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
++| \`src/auth/session.ts\` L1-13 (cut) | 4.80 | 0.03 | 0.05 | 0.05 | 0.05 | 0.05 | **0.92** | 0.05 | 0.10 | - | refactor 0.91 | auth 0.77 | end users 0.64 |
++| \`test/invoice.test.ts\` L2-6 | 2.40 | 0.05 | 0.05 | 0.05 | 0.05 | 0.88 | 0.05 | 0.05 | - | 0.70 | refactor 0.91 | auth 0.77 | end users 0.64 |
++| \`db/migrations/007_drop_legacy.sql\` L1-4 | skip | 0.97 | 0.05 | 0.05 | 0.05 | 0.05 | 0.05 | 0.05 | 0.10 | - | refactor 0.91 | auth 0.77 | end users 0.64 |
++
++PR level: description quality 1.62 of 2, tests cover the change 0.81.
++
++"
++`;
++
+ exports[`changes the description does not mention > are reported once in the summary, with the files, not once per hunk 1`] = `
+ "<!-- git-judge:summary -->
+ ## git-judge
+@@ -30,7 +48,7 @@ Update the description, or move them to their own PR.
+ <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+ 
+ <!-- git-judge:json
+-{"version":1,"conclusion":"success","tldr":"Renames things.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/util/format.ts.","whatToVerify":"Check src/util/format.ts before approving.","model":"gpt-5.6-luna","path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}},{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":1,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":1,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
++{"version":1,"headSha":null,"conclusion":"success","tldr":"Renames things.","verdicts":[{"id":"0bb254b270c8","hunkId":"src/auth/session.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"id":"e79dd5b7cd9d","hunkId":"test/invoice.test.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"id":"3d37eae8d9a5","hunkId":"src/util/format.ts#0","flagId":"unrelated_to_description","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/util/format.ts.","whatToVerify":"Check src/util/format.ts before approving.","model":"gpt-5.6-luna","path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}},{"id":"5705e682a617","hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in src/auth/session.ts.","whatToVerify":"Check src/auth/session.ts before approving.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":1,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":1,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"jev":{"hunks":{},"pr":{"descriptionQuality":1.62,"testsCoverChange":0.81}},"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+ -->"
+ `;
+ 
+@@ -57,7 +75,7 @@ Nothing flagged.
+ <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+ 
+ <!-- git-judge:json
+-{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[{"id":"no_description"}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":140},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
++{"version":1,"headSha":null,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"jev":{"hunks":{},"pr":{"descriptionQuality":1.62,"testsCoverChange":0.81}},"prWarnings":[{"id":"no_description"}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":140},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+ -->"
+ `;
+ 
+@@ -94,7 +112,7 @@ exports[`summary comment > PR with warnings 1`] = `
+ <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+ 
+ <!-- git-judge:json
+-{"version":1,"conclusion":"success","tldr":"Presented as a refactor, but it removes the token expiry check. One test was loosened to match.","verdicts":[{"hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"high","whatChanged":"The expiry check on the token claims was removed.","whatToVerify":"Confirm expired tokens are still rejected somewhere else.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","flagId":"test_loosened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":4.8,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":2.4,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[{"id":"weak_description","score":0.4},{"id":"split_suggested","changeTypes":["chore","feature","refactor"]}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":["src/auth/session.ts#0"],"labels":["area: auth","size: S","type: refactor"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
++{"version":1,"headSha":null,"conclusion":"success","tldr":"Presented as a refactor, but it removes the token expiry check. One test was loosened to match.","verdicts":[{"id":"5705e682a617","hunkId":"src/auth/session.ts#0","flagId":"safety_check_weakened","kind":"warning","probability":0.8,"confirmed":true,"severity":"high","whatChanged":"The expiry check on the token claims was removed.","whatToVerify":"Confirm expired tokens are still rejected somewhere else.","model":"gpt-5.6-luna","path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"id":"c85e5a7c6880","hunkId":"test/invoice.test.ts#0","flagId":"test_loosened","kind":"warning","probability":0.8,"confirmed":true,"severity":"medium","whatChanged":"Something changed in test/invoice.test.ts.","whatToVerify":"Check test/invoice.test.ts before approving.","model":"gpt-5.6-luna","path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"src/auth/session.ts#0","attention":4.8,"path":"src/auth/session.ts","startLine":1,"endLine":13,"anchor":{"line":1,"side":"RIGHT"}},{"hunkId":"test/invoice.test.ts#0","attention":2.4,"path":"test/invoice.test.ts","startLine":2,"endLine":6,"anchor":{"line":2,"side":"RIGHT"}},{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"jev":{"hunks":{},"pr":{"descriptionQuality":1.62,"testsCoverChange":0.81}},"prWarnings":[{"id":"weak_description","score":0.4},{"id":"split_suggested","changeTypes":["chore","feature","refactor"]}],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":["src/auth/session.ts#0"],"labels":["area: auth","size: S","type: refactor"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+ -->"
+ `;
+ 
+@@ -117,7 +135,7 @@ Mechanical hunks were judged by Jev only, no generative model read them.
+ <sub>5 hunks | 3.2 s | about $0.0025 | jev-1.13.0</sub>
+ 
+ <!-- git-judge:json
+-{"version":1,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":3,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0"],"costUsd":0.00252,"durationMs":3240}
++{"version":1,"headSha":null,"conclusion":"success","tldr":null,"verdicts":[],"readingOrder":[{"hunkId":"src/util/format.ts#0","attention":1,"path":"src/util/format.ts","startLine":10,"endLine":10,"anchor":{"line":10,"side":"RIGHT"}}],"jev":{"hunks":{},"pr":{"descriptionQuality":1.62,"testsCoverChange":0.81}},"prWarnings":[],"skipped":{"mechanical":3,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0"],"costUsd":0.00252,"durationMs":3240}
+ -->"
+ `;
+ 
+@@ -144,7 +162,7 @@ The check fails until a human clears these.
+ <sub>5 hunks | 3.2 s | about $0.0036 | jev-1.13.0, gpt-5.6-luna</sub>
+ 
+ <!-- git-judge:json
+-{"version":1,"conclusion":"failure","tldr":"Drops the legacy_orders table.","verdicts":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","flagId":"destructive_data","kind":"gate","probability":0.8,"confirmed":false,"severity":"high","whatChanged":"Something changed in db/migrations/007_drop_legacy.sql.","whatToVerify":"Check db/migrations/007_drop_legacy.sql before approving.","model":"gpt-5.6-luna","path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","attention":4,"path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
++{"version":1,"headSha":null,"conclusion":"failure","tldr":"Drops the legacy_orders table.","verdicts":[{"id":"c3f917debc73","hunkId":"db/migrations/007_drop_legacy.sql#0","flagId":"destructive_data","kind":"gate","probability":0.8,"confirmed":false,"severity":"high","whatChanged":"Something changed in db/migrations/007_drop_legacy.sql.","whatToVerify":"Check db/migrations/007_drop_legacy.sql before approving.","model":"gpt-5.6-luna","path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"readingOrder":[{"hunkId":"db/migrations/007_drop_legacy.sql#0","attention":4,"path":"db/migrations/007_drop_legacy.sql","startLine":1,"endLine":4,"anchor":{"line":1,"side":"RIGHT"}}],"jev":{"hunks":{},"pr":{"descriptionQuality":1.62,"testsCoverChange":0.81}},"prWarnings":[],"skipped":{"mechanical":0,"lockfile":1,"generated":0,"vendored":0,"overCap":0},"lowCoverage":[],"labels":["size: S"],"models":["jev-1.13.0","gpt-5.6-luna"],"costUsd":0.0036,"durationMs":3240}
+ -->"
+ `;
+ 
+diff --git a/test/pipeline.test.ts b/test/pipeline.test.ts
+index 4650709..5025155 100644
+--- a/test/pipeline.test.ts
++++ b/test/pipeline.test.ts
+@@ -94,6 +94,8 @@ test("a mixed PR: the auth change and the loosened test are read first, the rest
+   expect(tldrPrompts.at(-1)).toContain("- test/invoice.test.ts: test");
+   expect(tldrPrompts.at(-1)).not.toContain("vendor/lib/index.js");
+   expect(report.json.durationMs).toBe(3500);
++  expect(report.summary).toContain("<summary>Jev answers for 7 hunks</summary>");
++  expect(report.summary).toMatch(/\| `src\/auth\/session\.ts` L1-13 \| \d\.\d\d \| 0\.05 \| .*\*\*0\.92\*\* .*\| refactor 0\.90 \| auth 0\.90 \|/);
+   expect(seenFiles.has("vendor/lib/index.js")).toBe(false);
+   expect(seenFiles.has("assets/logo.png")).toBe(false);
+ });
+diff --git a/test/report.test.ts b/test/report.test.ts
+index 633bd2e..49a11e8 100644
+--- a/test/report.test.ts
++++ b/test/report.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, test } from "vitest";
+ import type { Hunk } from "../src/diff.js";
++import type { HunkAnswers, Judgement } from "../src/judge.js";
+ import type { Findings } from "../src/policy.js";
+ import {
+   buildDidNotRunReport,
+@@ -75,11 +76,38 @@ function input(found: Findings, written: Partial<Written> = {}): ReportInput {
+       usage: { "gpt-5.6-luna": { requests: 3, inputTokens: 3000, outputTokens: 400 } },
+       ...written,
+     },
+-    judgement: { model: "jev-1.13.0", inputTokens: 60_000 },
++    judgement: { model: "jev-1.13.0", inputTokens: 60_000, hunks: {}, pr: PR_ANSWERS },
+     durationMs: 3240,
+   };
+ }
+ 
++const PR_ANSWERS = {
++  description_quality: { type: "score", score: 1.62 },
++  tests_cover_change: { type: "noul", noul: 0.81 },
++} as unknown as Judgement["pr"];
++
++function jevAnswers(nouls: Record<string, number>, options: { unrelated?: number | null; custom?: Record<string, number>; lowCoverage?: boolean } = {}): HunkAnswers {
++  const noul = (id: string) => ({ type: "noul", noul: nouls[id] ?? 0.05 });
++  const pick = (choice: string, confidence: number) => ({ type: "choice", choice, confidence, probabilities: {} });
++  return {
++    code: {
++      secret_semantic: noul("secret_semantic"),
++      destructive_data: noul("destructive_data"),
++      mechanical: noul("mechanical"),
++      refactor_changes_behaviour: noul("refactor_changes_behaviour"),
++      test_loosened: noul("test_loosened"),
++      safety_check_weakened: noul("safety_check_weakened"),
++      comment_drift: noul("comment_drift"),
++      change_type: pick("refactor", 0.91),
++      sensitive_area: pick("auth", 0.77),
++      blast_radius: pick("end users", 0.64),
++    },
++    custom: options.custom ?? {},
++    mismatch: options.unrelated === null ? null : { unrelated_to_description: { type: "noul", noul: options.unrelated ?? 0.1 } },
++    lowCoverage: options.lowCoverage ?? false,
++  } as unknown as HunkAnswers;
++}
++
+ const CLEAN = input(
+   findings({
+     readingOrder: [{ hunkId: "src/util/format.ts#0", attention: 1 }],
+@@ -233,6 +261,54 @@ describe("JSON block", () => {
+   });
+ });
+ 
++describe("a report another agent can act on", () => {
++  const edit = "@@ -2,3 +2,3 @@\n context\n-expect(total).toBe(100);\n+expect(total).toBeDefined();\n context";
++  const idOf = (hunks: Hunk[], hunkId: string) =>
++    buildReport({
++      ...input(findings(), { verdicts: [verdict("test/invoice.test.ts", "test_loosened", { hunkId })] }),
++      hunks,
++    }).json.verdicts[0]!.id;
++
++  test("names the commit it judged, in the JSON and in the footer", () => {
++    const report = buildReport({ ...WARNINGS, headSha: "0123456789abcdef0123456789abcdef01234567" });
++    expect(report.json.headSha).toBe("0123456789abcdef0123456789abcdef01234567");
++    expect(report.summary).toContain("<sub>judged at 0123456 | ");
++    expect(buildReport(WARNINGS).json.headSha).toBeNull();
++  });
++
++  test("a finding keeps its id when a push moves the hunk without touching its changed lines", () => {
++    const before = [hunk("test/invoice.test.ts", 2, 6, { content: edit })];
++    const after = [
++      hunk("test/invoice.test.ts", 40, 44, {
++        id: "test/invoice.test.ts#1",
++        content: edit.replace("@@ -2,3 +2,3 @@", "@@ -40,3 +40,3 @@").replaceAll("context", "other context"),
++      }),
++    ];
++    expect(idOf(after, "test/invoice.test.ts#1")).toBe(idOf(before, "test/invoice.test.ts#0"));
++  });
++
++  test("a finding gets a new id when its changed lines change", () => {
++    const before = [hunk("test/invoice.test.ts", 2, 6, { content: edit })];
++    const after = [hunk("test/invoice.test.ts", 2, 6, { content: edit.replace("toBeDefined()", "toBeGreaterThan(0)") })];
++    expect(idOf(after, "test/invoice.test.ts#0")).not.toBe(idOf(before, "test/invoice.test.ts#0"));
++  });
++
++  test("two flags on one hunk, and the same edit twice in one file, all get different ids", () => {
++    const hunks = [
++      hunk("test/invoice.test.ts", 2, 6, { content: edit }),
++      hunk("test/invoice.test.ts", 40, 44, { id: "test/invoice.test.ts#1", content: edit }),
++    ];
++    const verdicts = [
++      verdict("test/invoice.test.ts", "test_loosened"),
++      verdict("test/invoice.test.ts", "comment_drift"),
++      verdict("test/invoice.test.ts", "test_loosened", { hunkId: "test/invoice.test.ts#1" }),
++    ];
++    const ids = buildReport({ ...input(findings(), { verdicts }), hunks }).json.verdicts.map((entry) => entry.id);
++    expect(new Set(ids).size).toBe(3);
++    expect(ids[2]).toBe(`${ids[0]}-2`);
++  });
++});
++
+ describe("changes the description does not mention", () => {
+   const paths = ["src/auth/session.ts", "test/invoice.test.ts", "src/util/format.ts"];
+   const report = buildReport(
+@@ -258,6 +334,80 @@ describe("changes the description does not mention", () => {
+   });
+ });
+ 
++describe("Jev answers table", () => {
++  const judged: ReportInput = {
++    ...WARNINGS,
++    findings: {
++      ...WARNINGS.findings,
++      flags: [{ hunkId: "src/auth/session.ts#0", id: "safety_check_weakened", kind: "warning", probability: 0.92, escalate: false }],
++    },
++    judgement: {
++      ...WARNINGS.judgement,
++      hunks: {
++        "src/auth/session.ts#0": jevAnswers({ safety_check_weakened: 0.92, mechanical: 0.03 }, { lowCoverage: true }),
++        "test/invoice.test.ts#0": jevAnswers({ test_loosened: 0.88 }, { unrelated: null, custom: { invoicing: 0.7 } }),
++        "db/migrations/007_drop_legacy.sql#0": jevAnswers({ mechanical: 0.97 }),
++      },
++    },
++  };
++  const report = buildReport(judged);
++  const table = report.summary.slice(report.summary.indexOf("<details>"), report.summary.indexOf("</details>"));
++
++  test("is collapsed, one row per judged hunk, reading order first, then the skipped ones", () => {
++    expect(table).toMatchSnapshot();
++    const rows = table.split("\n").filter((line) => line.startsWith("| `"));
++    expect(rows.map((row) => row.split("`")[1])).toEqual([
++      "src/auth/session.ts",
++      "test/invoice.test.ts",
++      "db/migrations/007_drop_legacy.sql",
++    ]);
++    expect(rows[2]).toContain("| skip |");
++  });
++
++  test("bolds the value that raised a flag, and only that one", () => {
++    expect(table.match(/\*\*\d\.\d\d\*\*/g)).toEqual(["**0.92**"]);
++  });
++
++  test("shows a dash where a question was not asked, custom questions get a column, a cut hunk is marked", () => {
++    const [first, second] = table.split("\n").filter((line) => line.startsWith("| `"));
++    expect(table).toContain("| undesc | invoicing | type |");
++    expect(second).toContain("| - | 0.70 | refactor 0.91 | auth 0.77 | end users 0.64 |");
++    expect(first).toContain("L1-13 (cut) | 4.80 |");
++    expect(table).toContain("description quality 1.62 of 2, tests cover the change 0.81");
++  });
++
++  test("the same answers are in the JSON block", () => {
++    const jev = extractJson(report.summary)!.jev!;
++    expect(jev.hunks["src/auth/session.ts#0"]).toMatchObject({
++      path: "src/auth/session.ts",
++      nouls: { safety_check_weakened: 0.92, unrelated_to_description: 0.1 },
++      changeType: { choice: "refactor", confidence: 0.91 },
++      lowCoverage: true,
++    });
++    expect(jev.pr).toEqual({ descriptionQuality: 1.62, testsCoverChange: 0.81 });
++  });
++
++  test("nothing judged means no table", () => {
++    expect(buildReport(WARNINGS).summary).not.toContain("<details>");
++  });
++
++  test("a comment too large for GitHub drops the raw answers from the JSON, keeps the capped table", () => {
++    const many = Array.from({ length: 200 }, (_, index) => hunk(`src/some/deeply/nested/module/path/file${index}.ts`, 1, 5));
++    const big = buildReport({
++      ...CLEAN,
++      hunks: many,
++      findings: findings({ readingOrder: many.map((entry) => ({ hunkId: entry.id, attention: 1 })) }),
++      judgement: { ...CLEAN.judgement, hunks: Object.fromEntries(many.map((entry) => [entry.id, jevAnswers({})])) },
++      prUrl: "https://github.com/owner/repository/pull/123",
++    });
++    expect(big.summary.length).toBeLessThan(65_536);
++    expect(extractJson(big.summary)!.jev).toBeNull();
++    expect(big.json.jev).not.toBeNull();
++    expect(big.summary.split("\n").filter((line) => line.startsWith("| [`"))).toHaveLength(60);
++    expect(big.summary).toContain("And 140 more hunks");
++  });
++});
++
+ describe("one complete comment", () => {
+   test("every finding carries what changed and what to verify, in reading order", () => {
+     const { summary } = buildReport(WARNINGS);

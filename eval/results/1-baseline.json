@@ -1,0 +1,154 @@
+{
+  "totals": {
+    "cases": 8,
+    "recallTop5": 0.7,
+    "recallTop10": 0.8,
+    "flagRecall": 1,
+    "flagPrecision": 0.3333333333333333
+  },
+  "results": [
+    {
+      "name": "clean-mechanical",
+      "score": {
+        "mustRead": 0,
+        "inTop5": 0,
+        "inTop10": 0,
+        "ranks": [],
+        "expectedFlags": 0,
+        "truePositives": 0,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.001400682
+    },
+    {
+      "name": "destructive-migration",
+      "score": {
+        "mustRead": 1,
+        "inTop5": 1,
+        "inTop10": 1,
+        "ranks": [
+          1
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [
+          "db/migrations/0042_drop_legacy_address.sql#0|refactor_changes_behaviour"
+        ],
+        "missedFlags": []
+      },
+      "costUsd": 0.002050268
+    },
+    {
+      "name": "loosened-test",
+      "score": {
+        "mustRead": 2,
+        "inTop5": 2,
+        "inTop10": 2,
+        "ranks": [
+          1,
+          2
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.00168856
+    },
+    {
+      "name": "real-stale-run-guard",
+      "score": {
+        "mustRead": 3,
+        "inTop5": 0,
+        "inTop10": 1,
+        "ranks": [
+          12,
+          13,
+          10
+        ],
+        "expectedFlags": 0,
+        "truePositives": 0,
+        "falsePositives": [
+          "src/report.ts#6|refactor_changes_behaviour",
+          "src/report.ts#5|unrelated_to_description",
+          "README.md#3|unrelated_to_description",
+          "README.md#2|unrelated_to_description",
+          "src/report.ts#9|unrelated_to_description",
+          "src/report.ts#1|unrelated_to_description",
+          "src/report.ts#4|unrelated_to_description",
+          "test/pipeline.test.ts#0|unrelated_to_description",
+          "LICENSE#0|unrelated_to_description",
+          "test/report.test.ts#1|unrelated_to_description",
+          "test/report.test.ts#3|unrelated_to_description"
+        ],
+        "missedFlags": []
+      },
+      "costUsd": 0.0083774
+    },
+    {
+      "name": "refactor-drops-tenant-filter",
+      "score": {
+        "mustRead": 1,
+        "inTop5": 1,
+        "inTop10": 1,
+        "ranks": [
+          1
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.0019760800000000003
+    },
+    {
+      "name": "secret-as-default",
+      "score": {
+        "mustRead": 1,
+        "inTop5": 1,
+        "inTop10": 1,
+        "ranks": [
+          1
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.00113169
+    },
+    {
+      "name": "swallowed-payment-error",
+      "score": {
+        "mustRead": 1,
+        "inTop5": 1,
+        "inTop10": 1,
+        "ranks": [
+          1
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.0016894800000000001
+    },
+    {
+      "name": "undescribed-rate-limit",
+      "score": {
+        "mustRead": 1,
+        "inTop5": 1,
+        "inTop10": 1,
+        "ranks": [
+          1
+        ],
+        "expectedFlags": 1,
+        "truePositives": 1,
+        "falsePositives": [],
+        "missedFlags": []
+      },
+      "costUsd": 0.001889414
+    }
+  ]
+}
