@@ -1,52 +1,82 @@
 # git-judge-jev
 
-A GitHub Action that tells the reviewer where to look, and when a pull request's story does not match its diff.
+A GitHub Action that reads a pull request before you do and posts one comment: what the PR really does, which few hunks need a human, why, and what to verify in each.
 
-A typical agent-written PR is 30 files, and a handful of them hold the actual change.
-git-judge-jev reads every hunk, sets the mechanical ones aside, and posts one comment: what the PR really does, the few hunks that need a human, and what to verify in each.
-It does not find logic bugs and it does not suggest code.
+It is built for pull requests written by coding agents.
+A typical one is 30 files, a handful of them hold the actual change, and the description was written by the same agent that wrote the code.
+Three things slip past a reviewer in those PRs: a test made green by loosening its assertion, a check quietly removed inside a "refactor", and a change the description never mentions.
+git-judge-jev looks for exactly those, ranks the rest of the diff by how much attention it deserves, and sets the mechanical hunks aside.
+
+- **Cheap.** About one cent and ten seconds for a 90-hunk PR.
+- **Quiet.** One comment per PR, updated in place on every push. No inline comments, no review spam.
+- **Narrow.** It does not hunt for logic bugs, suggest code, or comment on style. Every line it writes is tied to a specific claim about a specific hunk.
+- **Readable by agents.** The same findings are exposed as JSON, so a coding agent can act on them without reading the diff.
+
+The "jev" in the name is [TypeSafe](https://typesafe.ai)'s Jev, a small model that answers yes/no questions with calibrated probabilities instead of text.
+Jev judges every hunk. A generative model is called only for the hunks Jev flags.
+
+**Jump to:** [Use it](#use-it) | [What it looks for](#what-it-looks-for) | [How it works](#how-it-works) | [Policy](#policy) | [Limits](#limits-you-should-know)
+
+## What the comment looks like
+
+Shortened from a real run on [a pull request in this repo](https://github.com/davidrydberg/git-judge-jev/pull/5).
+
+> **TL;DR** This PR ties reports to the commit that produced them, assigns stable IDs to findings, and removes stale runs. Review the reporting changes: unflagged items now show up to 10 instead of 5.
+>
+> **Read first**
+>
+> - **Safety check weakened** (low) in `src/report.ts` L7-18<br>
+>   The maximum number of unflagged items listed increased from 5 to 10, while a separate 50-item embedded reading-order limit was added.<br>
+>   **Verify:** Verify that doubling the visible unflagged-item limit does not cause report-size regressions under the existing comment-size cap.
+>
+>   ```diff
+>   -const MAX_UNFLAGGED_LISTED = 5;
+>   +const MAX_UNFLAGGED_LISTED = 10;
+>   +const MAX_EMBEDDED_READING_ORDER = 50;
+>   ```
+>
+> **Then read**
+>
+> 1. `src/writer.ts` L117-140 - bugfix, other developers would notice. Close to a flag: safety check weakened 0.41, flags at 0.6
+> 2. `src/policy.ts` L194-204 - other developers would notice
+> 3. `README.md` L102-108 - docs, touches public API
+>
+> And 49 more hunks with no finding, in the JSON block of this comment.
+>
+> **Skip** 4 mechanical, 32 generated.
+>
+> **Notes** This PR mixes bugfix, chore, feature, refactor changes. Consider splitting it.
+>
+> <sub>judged at c5d4477 | 97 hunks | 9.1 s | about $0.0098 | jev-1.13.0, gpt-5.6-luna</sub>
+
+Every location links to its line in the Files tab.
+"Close to a flag" shows a question that scored under its threshold. This run predates the lower default thresholds, which is why it says 0.6.
+The code under a finding is printed from the diff itself, so a line the diff does not have is never shown.
+
+## What it looks for
+
+| Finding | Fails the check |
+|---|---|
+| A credential, key, or token in the added lines | yes |
+| A table or column deleted, renamed, or truncated, or stored data rewritten | yes |
+| A test made to pass by loosening or removing an assertion | no |
+| Validation, error handling, a permission check, or a limit removed or weakened | no |
+| A change presented as a refactor that alters behaviour | no |
+| A comment that no longer matches the code beside it | no |
+| Changes the PR description does not mention | no |
+| Your own yes/no questions, from the policy file | no |
+
+The workflow job is the check.
+It fails only on the two gates, never on a warning.
 
 It is early.
-It runs on its own pull requests in this repo, but the thresholds it ships with are guesses.
+It runs on its own pull requests in this repo, and the thresholds it ships with are measured on a small suite, see [Measure a change to the judge](#measure-a-change-to-the-judge).
 
-## What you get on a pull request
+## Use it
 
-One comment, updated in place on every push.
-No inline comments and no review entries, so a PR with ten pushes still has one git-judge-jev comment.
-
-| Section | What it holds |
-|---|---|
-| TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
-| Blocking | Gates that fail the check: a possible secret, a destructive data change |
-| Read first | Each confirmed finding, linked to its line in the Files tab, with what changed, what to verify, and the changed lines that show it as a diff block. The writer model picks the lines, git-judge-jev prints them from the diff, so a line the diff does not have is never shown |
-| Then read | The next ten hunks by attention, linked, each with why it is there: the kind of change, the area it touches, who would notice (each only where Jev was confident), and any question that came close to a flag, with the hunk's changed lines under it. Built from Jev's answers, no model writes it |
-| Not mentioned in the description | Files with changes the PR text does not cover |
-| Skip | How many hunks were mechanical, lockfile, generated, or vendored |
-| Notes | A weak or missing description, missing tests, a suggestion to split the PR |
-| Jev answers | Collapsed table of every raw answer per hunk, the value that raised a flag in bold |
-
-The comment ends with the hunk count, duration, and cost of the run.
-The same data is embedded as JSON in a hidden HTML comment and exposed as the `json` output, so another agent can read the findings without reading the diff.
-
-git-judge-jev also applies labels (`area: auth`, `size: M`, `type: refactor`) and removes the ones that no longer apply.
-The workflow job is the check.
-It fails only on a gate, never on a warning.
-
-The findings it looks for:
-
-- A test made to pass by loosening or removing an assertion.
-- Validation, error handling, a permission check, or a limit removed or weakened.
-- A change presented as a refactor that alters behaviour.
-- A comment that no longer matches the code beside it.
-- Changes the PR description does not mention.
-- Gate: a credential, key, or token in the added lines.
-- Gate: a table or column deleted, renamed, or truncated, or stored data rewritten.
-- Your own yes/no questions from the policy file.
-
-## Install
-
-You need a [TypeSafe](https://typesafe.ai) API key and an OpenAI API key.
-TypeSafe's Jev model is in early access behind a waitlist.
+You need two API keys: [TypeSafe](https://typesafe.ai) for Jev, and OpenAI for the writer model.
+Jev is in early access behind a waitlist.
+Setup is one workflow file and two secrets, there is nothing to host.
 
 1. Add two repository secrets under Settings, Secrets and variables, Actions: `TYPESAFE_API_KEY` and `OPENAI_API_KEY`.
    Add `ANTHROPIC_API_KEY` only if your policy names a Claude model.
@@ -106,6 +136,28 @@ GitHub gives them no secrets, and running with `pull_request_target` has not had
 
 If TypeSafe or the writer model cannot be reached, the check passes and the comment says git-judge-jev did not run.
 Set `failOnError: true` in the policy to fail instead.
+
+## The comment, section by section
+
+| Section | What it holds |
+|---|---|
+| TL;DR | Two sentences: what the PR does as a whole, then what deserves attention |
+| Blocking | The gates that fail the check |
+| Read first | Each confirmed finding: what changed, what to verify, and the changed lines that show it |
+| Then read | The next ten hunks by attention, each with why it is there: the kind of change, the area, who would notice, and any question that came close to a flag |
+| Not mentioned in the description | Files with changes the PR text does not cover |
+| Skip | How many hunks were mechanical, lockfile, generated, or vendored |
+| Notes | A weak or missing description, missing tests, a suggestion to split the PR |
+| Jev answers | Collapsed table of every raw answer per hunk, for tuning thresholds |
+
+git-judge-jev also applies labels (`area: auth`, `size: M`, `type: refactor`) and removes the ones that no longer apply.
+
+### For coding agents
+
+The full report is embedded as JSON in a hidden HTML comment and exposed as the `json` output.
+It names the `headSha` that was judged, and every finding has an `id` that stays the same across pushes as long as the flagged hunk does, so an agent can tell a standing finding from a new one.
+Each finding carries `whatChanged`, `whatToVerify`, and the `evidence` lines.
+A gate is cleared by a human, never by the agent that wrote the code.
 
 ## How it works
 
