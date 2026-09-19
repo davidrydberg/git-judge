@@ -1,5 +1,5 @@
 {
-  "name": "git-judge",
+  "name": "git-judge-jev",
   "version": "0.0.0",
   "description": "GitHub Action that tells the reviewer where to look and when a PR's story does not match its diff.",
   "private": true,
@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "build": "esbuild src/action.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/index.cjs --legal-comments=none",
-    "try": "esbuild scripts/try.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=node_modules/.cache/git-judge-try.mjs && node --env-file=.env node_modules/.cache/git-judge-try.mjs"
+    "eval": "esbuild scripts/eval.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=node_modules/.cache/git-judge-jev-eval.mjs && node --env-file=.env node_modules/.cache/git-judge-jev-eval.mjs",
+    "try": "esbuild scripts/try.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=node_modules/.cache/git-judge-jev-try.mjs && node --env-file=.env node_modules/.cache/git-judge-jev-try.mjs"
   },
   "dependencies": {
     "@actions/core": "^3.0.1",

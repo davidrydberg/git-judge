@@ -1,0 +1,7 @@
+# The eval cases are diffs with a defect planted in them: a dropped column, a committed token.
+# Judged as code they fail the gates, which is them working. They are fixtures, so they are set aside.
+exclude:
+  generated:
+    - "eval/cases/**"
+    - "eval/results/**"
+    - "test/fixtures/**"

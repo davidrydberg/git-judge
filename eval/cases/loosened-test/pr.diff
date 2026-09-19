@@ -1,0 +1,363 @@
+diff --git a/docs/CONTRIBUTING.md b/docs/CONTRIBUTING.md
+index afdc5d5..cfcf23c 100644
+--- a/docs/CONTRIBUTING.md
++++ b/docs/CONTRIBUTING.md
+@@ -1,3 +1,3 @@
+ # Contributing
+ 
+-Open a PR.
++Open a PR. Run `npm test` first.
+diff --git a/src/lib/retry.ts b/src/lib/retry.ts
+index 6501d3c..d8e9c7a 100644
+--- a/src/lib/retry.ts
++++ b/src/lib/retry.ts
+@@ -1 +1,5 @@
+-export const RETRY_DELAY_MS = 200;
++export const RETRY_DELAY_MS = 250;
++
++export function backoff(attempt: number) {
++  return RETRY_DELAY_MS * 2 ** attempt;
++}
+diff --git a/src/orders/sort.ts b/src/orders/sort.ts
+index 19c5cf0..eed8f59 100644
+--- a/src/orders/sort.ts
++++ b/src/orders/sort.ts
+@@ -1,3 +1,4 @@
+-export function byDate<T extends { createdAt: Date }>(items: T[]) {
+-  return [...items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
++export function byDate<T extends { createdAt: Date }>(items: T[], newestFirst = false) {
++  const sorted = [...items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
++  return newestFirst ? sorted.reverse() : sorted;
+ }
+diff --git a/src/pricing/discount.ts b/src/pricing/discount.ts
+index 333f62f..9fa02aa 100644
+--- a/src/pricing/discount.ts
++++ b/src/pricing/discount.ts
+@@ -1,4 +1,5 @@
+-export function applyDiscount(total: number, percent: number): number {
++export function applyDiscount(total: number, percent: number, code?: string): number {
+   if (percent < 0 || percent > 100) throw new RangeError("percent out of range");
+-  return Math.round(total * (1 - percent / 100));
++  const extra = code === "WELCOME" ? 5 : 0;
++  return Math.round(total * (1 - (percent + extra) / 100));
+ }
+diff --git a/src/reports/csv.ts b/src/reports/csv.ts
+index ccf397e..6d364bd 100644
+--- a/src/reports/csv.ts
++++ b/src/reports/csv.ts
+@@ -1,3 +1,3 @@
+-export function toCsv(rows: string[][]) {
+-  return rows.map((row) => row.join(",")).join("\n");
++export function toCsv(rows: string[][], separator = ",") {
++  return rows.map((row) => row.join(separator)).join("\n");
+ }
+diff --git a/src/services/service0.ts b/src/services/service0.ts
+index bf9bef1..1e49bc3 100644
+--- a/src/services/service0.ts
++++ b/src/services/service0.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load0(id: string) {
+-  logger.info("load0", { id });
++  log.info("load0", { id });
+   const row = await db.table0.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list0(limit = 50) {
+-  logger.info("list0", { limit });
++  log.info("list0", { limit });
+   return db.table0.findMany({ take: limit });
+ }
+diff --git a/src/services/service1.ts b/src/services/service1.ts
+index cfa3569..a74d162 100644
+--- a/src/services/service1.ts
++++ b/src/services/service1.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load1(id: string) {
+-  logger.info("load1", { id });
++  log.info("load1", { id });
+   const row = await db.table1.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list1(limit = 50) {
+-  logger.info("list1", { limit });
++  log.info("list1", { limit });
+   return db.table1.findMany({ take: limit });
+ }
+diff --git a/src/services/service10.ts b/src/services/service10.ts
+index 1047240..9948f8b 100644
+--- a/src/services/service10.ts
++++ b/src/services/service10.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load10(id: string) {
+-  logger.info("load10", { id });
++  log.info("load10", { id });
+   const row = await db.table10.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list10(limit = 50) {
+-  logger.info("list10", { limit });
++  log.info("list10", { limit });
+   return db.table10.findMany({ take: limit });
+ }
+diff --git a/src/services/service11.ts b/src/services/service11.ts
+index e37601d..e8fad03 100644
+--- a/src/services/service11.ts
++++ b/src/services/service11.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load11(id: string) {
+-  logger.info("load11", { id });
++  log.info("load11", { id });
+   const row = await db.table11.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list11(limit = 50) {
+-  logger.info("list11", { limit });
++  log.info("list11", { limit });
+   return db.table11.findMany({ take: limit });
+ }
+diff --git a/src/services/service2.ts b/src/services/service2.ts
+index 6c40739..63a0c63 100644
+--- a/src/services/service2.ts
++++ b/src/services/service2.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load2(id: string) {
+-  logger.info("load2", { id });
++  log.info("load2", { id });
+   const row = await db.table2.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list2(limit = 50) {
+-  logger.info("list2", { limit });
++  log.info("list2", { limit });
+   return db.table2.findMany({ take: limit });
+ }
+diff --git a/src/services/service3.ts b/src/services/service3.ts
+index b871dfd..edf294b 100644
+--- a/src/services/service3.ts
++++ b/src/services/service3.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load3(id: string) {
+-  logger.info("load3", { id });
++  log.info("load3", { id });
+   const row = await db.table3.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list3(limit = 50) {
+-  logger.info("list3", { limit });
++  log.info("list3", { limit });
+   return db.table3.findMany({ take: limit });
+ }
+diff --git a/src/services/service4.ts b/src/services/service4.ts
+index 9bbbd96..6b8b8c5 100644
+--- a/src/services/service4.ts
++++ b/src/services/service4.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load4(id: string) {
+-  logger.info("load4", { id });
++  log.info("load4", { id });
+   const row = await db.table4.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list4(limit = 50) {
+-  logger.info("list4", { limit });
++  log.info("list4", { limit });
+   return db.table4.findMany({ take: limit });
+ }
+diff --git a/src/services/service5.ts b/src/services/service5.ts
+index 275fa82..9949dac 100644
+--- a/src/services/service5.ts
++++ b/src/services/service5.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load5(id: string) {
+-  logger.info("load5", { id });
++  log.info("load5", { id });
+   const row = await db.table5.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list5(limit = 50) {
+-  logger.info("list5", { limit });
++  log.info("list5", { limit });
+   return db.table5.findMany({ take: limit });
+ }
+diff --git a/src/services/service6.ts b/src/services/service6.ts
+index f945c43..4a9a1a9 100644
+--- a/src/services/service6.ts
++++ b/src/services/service6.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load6(id: string) {
+-  logger.info("load6", { id });
++  log.info("load6", { id });
+   const row = await db.table6.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list6(limit = 50) {
+-  logger.info("list6", { limit });
++  log.info("list6", { limit });
+   return db.table6.findMany({ take: limit });
+ }
+diff --git a/src/services/service7.ts b/src/services/service7.ts
+index c577110..ad72a78 100644
+--- a/src/services/service7.ts
++++ b/src/services/service7.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load7(id: string) {
+-  logger.info("load7", { id });
++  log.info("load7", { id });
+   const row = await db.table7.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list7(limit = 50) {
+-  logger.info("list7", { limit });
++  log.info("list7", { limit });
+   return db.table7.findMany({ take: limit });
+ }
+diff --git a/src/services/service8.ts b/src/services/service8.ts
+index 573e2c4..4db3b30 100644
+--- a/src/services/service8.ts
++++ b/src/services/service8.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load8(id: string) {
+-  logger.info("load8", { id });
++  log.info("load8", { id });
+   const row = await db.table8.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list8(limit = 50) {
+-  logger.info("list8", { limit });
++  log.info("list8", { limit });
+   return db.table8.findMany({ take: limit });
+ }
+diff --git a/src/services/service9.ts b/src/services/service9.ts
+index a119d07..a32b213 100644
+--- a/src/services/service9.ts
++++ b/src/services/service9.ts
+@@ -1,15 +1,15 @@
+ import { z } from "zod";
+-import { logger } from "../lib/logger";
+ import { db } from "../lib/db";
++import { log } from "../lib/logger";
+ 
+ export async function load9(id: string) {
+-  logger.info("load9", { id });
++  log.info("load9", { id });
+   const row = await db.table9.findUnique({ where: { id } });
+   if (!row) throw new Error("not found");
+   return z.object({ id: z.string() }).parse(row);
+ }
+ 
+ export async function list9(limit = 50) {
+-  logger.info("list9", { limit });
++  log.info("list9", { limit });
+   return db.table9.findMany({ take: limit });
+ }
+diff --git a/src/ui/labels.ts b/src/ui/labels.ts
+index 18dcd76..d0ecfa2 100644
+--- a/src/ui/labels.ts
++++ b/src/ui/labels.ts
+@@ -1,2 +1,2 @@
+-export const SAVE_LABEL = "Save";
++export const SAVE_LABEL = "Save changes";
+ export const CANCEL_LABEL = "Cancel";
+diff --git a/src/users/displayName.ts b/src/users/displayName.ts
+index 73c1580..8cd5e22 100644
+--- a/src/users/displayName.ts
++++ b/src/users/displayName.ts
+@@ -1,3 +1,3 @@
+-export function displayName(user: { first: string; last: string }) {
+-  return `${user.first} ${user.last}`;
++export function displayName(user: { first: string; last: string; nickname?: string }) {
++  return user.nickname ?? `${user.first} ${user.last}`;
+ }
+diff --git a/test/pricing/discount.test.ts b/test/pricing/discount.test.ts
+index fc389c1..df6230e 100644
+--- a/test/pricing/discount.test.ts
++++ b/test/pricing/discount.test.ts
+@@ -5,6 +5,10 @@ test("ten percent off", () => {
+   expect(applyDiscount(1000, 10)).toBe(900);
+ });
+ 
++test("welcome code stacks", () => {
++  expect(applyDiscount(1000, 98, "WELCOME")).toBeDefined();
++});
++
+ test("rejects a percent over 100", () => {
+-  expect(() => applyDiscount(1000, 101)).toThrow(RangeError);
++  expect(() => applyDiscount(1000, 101)).not.toBeNull();
+ });

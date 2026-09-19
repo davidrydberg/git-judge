@@ -20,6 +20,8 @@ interface Spec {
   testLoosened?: number;
   safety?: number;
   commentDrift?: number;
+  /** One of the logic signals. They count by their maximum, so one is enough to test with. */
+  condition?: number;
   unrelated?: number | null;
   type?: string;
   typeConfidence?: number;
@@ -45,6 +47,11 @@ function answers(spec: Spec = {}): HunkAnswers {
       test_loosened: noul(spec.testLoosened),
       safety_check_weakened: noul(spec.safety),
       comment_drift: noul(spec.commentDrift),
+      error_handling_changed: noul(),
+      condition_changed: noul(spec.condition),
+      external_io_added: noul(),
+      shared_state_changed: noul(),
+      limit_or_default_changed: noul(),
       change_type: choice(
         ["feature", "bugfix", "refactor", "test", "docs", "chore"],
         spec.type ?? "feature",
@@ -113,7 +120,7 @@ describe("policy file", () => {
   test("a partial file overrides only what it names", () => {
     const policy = parsePolicy("thresholds:\n  warnings:\n    test_loosened: 0.8\nminAttention: 0");
     expect(policy.thresholds.warnings.test_loosened).toBe(0.8);
-    expect(policy.thresholds.warnings.comment_drift).toBe(0.7);
+    expect(policy.thresholds.warnings.comment_drift).toBe(0.5);
     expect(policy.minAttention).toBe(0);
   });
 
@@ -124,7 +131,7 @@ describe("policy file", () => {
     ["a custom question id with a colon", "customQuestions:\n  - id: 'a:b'\n    question: x"],
     ["a duplicate custom question id", "customQuestions:\n  - {id: a, question: x}\n  - {id: a, question: y}"],
   ])("%s is rejected", (_name, yaml) => {
-    expect(() => parsePolicy(yaml)).toThrow(/Invalid git-judge policy/);
+    expect(() => parsePolicy(yaml)).toThrow(/Invalid git-judge-jev policy/);
   });
 });
 
@@ -148,8 +155,19 @@ describe("attention formula", () => {
   test("a test file counts area and blast radius at half, a loosened test in full", () => {
     const spec = { area: "auth", blast: "end users", testLoosened: 0.4 };
     expect(attention(answers(spec), policy)).toBeCloseTo(3.8);
-    expect(attention(answers(spec), policy, true)).toBeCloseTo(2.3);
-    expect(attention(answers(spec), parsePolicy("weights:\n  testFile: 1"), true)).toBeCloseTo(3.8);
+    expect(attention(answers(spec), policy, { isTest: true })).toBeCloseTo(2.3);
+    expect(attention(answers(spec), parsePolicy("weights:\n  testFile: 1"), { isTest: true })).toBeCloseTo(3.8);
+  });
+
+  test("the strongest logic signal scales area and blast radius, and never the judgement term", () => {
+    expect(attention(answers({ condition: 0.9 }), policy)).toBeCloseTo(1.9);
+    expect(attention(answers({ area: "auth", condition: 0.5, safety: 0.2 }), policy)).toBeCloseTo(2 * 1.5 + 0.4);
+    expect(attention(answers({ condition: 0.9 }), parsePolicy("weights:\n  logicSignal: 0"))).toBeCloseTo(1);
+  });
+
+  test("prose counts area and blast radius only", () => {
+    const spec = { area: "public_api", blast: "end users", safety: 0.9, condition: 0.9 };
+    expect(attention(answers(spec), policy, { isProse: true })).toBeCloseTo(2.25);
   });
 
   test("area weight follows the probabilities, not only the top option", () => {
@@ -172,12 +190,12 @@ describe("reading order", () => {
   });
 
   test("a score from half its threshold up to the threshold is a near miss, with no flag", () => {
-    const findings = run({ close: { safety: 0.44, testLoosened: 0.29, secret: 0.5 }, far: { safety: 0.1 } });
+    const findings = run({ close: { safety: 0.3, testLoosened: 0.19, secret: 0.5 }, far: { safety: 0.1 } });
     expect(findings.flags).toEqual([]);
     const misses = Object.fromEntries(findings.readingOrder.map((entry) => [entry.hunkId, entry.nearMisses]));
     expect(misses.close).toEqual([
       { id: "secret_semantic", probability: 0.5, threshold: 0.9 },
-      { id: "safety_check_weakened", probability: 0.44, threshold: 0.6 },
+      { id: "safety_check_weakened", probability: 0.3, threshold: 0.4 },
     ]);
     expect(misses.far).toEqual([]);
   });
@@ -189,10 +207,21 @@ describe("reading order", () => {
   });
 
   test("changing behaviour is a near miss only where it could be a flag, inside a refactor", () => {
-    expect(run({ feature: { behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([]);
-    expect(run({ tidy: { type: "refactor", behaviour: 0.5 } }).readingOrder[0]!.nearMisses).toEqual([
-      { id: "refactor_changes_behaviour", probability: 0.5, threshold: 0.6 },
+    expect(run({ feature: { behaviour: 0.3 } }).readingOrder[0]!.nearMisses).toEqual([]);
+    expect(run({ tidy: { type: "refactor", behaviour: 0.3 } }).readingOrder[0]!.nearMisses).toEqual([
+      { id: "refactor_changes_behaviour", probability: 0.3, threshold: 0.4 },
     ]);
+  });
+
+  test("a logic signal is passed on only when Jev is sure of it, and never for prose", () => {
+    expect(run({ a: { condition: 0.7 } }).readingOrder[0]!.signals).toEqual(["condition_changed"]);
+    expect(run({ a: { condition: 0.69 } }).readingOrder[0]!.signals).toEqual([]);
+    const judgement = {
+      hunks: { readme: answers({ condition: 0.9 }) },
+      pr: { description_quality: { score: 2 }, tests_cover_change: { noul: 1 } },
+    } as unknown as Judgement;
+    const prose = evaluate([hunk("readme", { path: "README.md" })], judgement, DESCRIPTION, parsePolicy(""));
+    expect(prose.readingOrder[0]!.signals).toEqual([]);
   });
 
   test("a pick Jev was not confident in is not passed on as a reason to read", () => {
@@ -255,17 +284,31 @@ describe("gates", () => {
 
 describe("warnings", () => {
   test.each<[string, Spec, string[]]>([
-    ["test loosened at threshold", { testLoosened: 0.6 }, ["h:test_loosened"]],
-    ["test loosened below", { testLoosened: 0.59 }, []],
+    ["test loosened at threshold", { testLoosened: 0.4 }, ["h:test_loosened"]],
+    ["test loosened below", { testLoosened: 0.39 }, []],
     ["safety check weakened", { safety: 0.7 }, ["h:safety_check_weakened"]],
     ["comment drift", { commentDrift: 0.7 }, ["h:comment_drift"]],
     ["unrelated to description", { unrelated: 0.7 }, ["h:unrelated_to_description"]],
     ["behaviour change in a feature is expected", { behaviour: 0.95, type: "feature" }, []],
     ["behaviour change in a refactor", { behaviour: 0.95, type: "refactor" }, ["h:refactor_changes_behaviour"]],
-    ["refactor below the behaviour threshold", { behaviour: 0.5, type: "refactor" }, []],
+    ["refactor below the behaviour threshold", { behaviour: 0.39, type: "refactor" }, []],
     ["unsure it is a refactor", { behaviour: 0.95, type: "refactor", typeConfidence: 0.3 }, []],
   ])("%s", (_name, spec, expected) => {
     expect(flagIds(run({ h: spec }))).toEqual(expected);
+  });
+});
+
+describe("prose", () => {
+  test("questions about code raise nothing on documentation, gates and the description flag still do", () => {
+    const readme = hunk("readme", { path: "docs/README.md" });
+    const spec = { safety: 0.9, testLoosened: 0.9, commentDrift: 0.9, type: "refactor", behaviour: 0.9, unrelated: 0.9, secret: 0.95 };
+    const judgement = {
+      hunks: { readme: answers(spec) },
+      pr: { description_quality: { score: 2 }, tests_cover_change: { noul: 1 } },
+    } as unknown as Judgement;
+    const findings = evaluate([readme], judgement, DESCRIPTION, parsePolicy(""));
+    expect(flagIds(findings)).toEqual(["readme:secret_semantic", "readme:unrelated_to_description"]);
+    expect(findings.readingOrder[0]!.nearMisses).toEqual([]);
   });
 });
 

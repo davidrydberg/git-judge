@@ -1,0 +1,17 @@
+{
+  "title": "Drop legacy address columns",
+  "description": "Drops customers.legacy_address and customers.legacy_postcode, which were replaced by the addresses table in migration 0031, and removes the fields from the Customer model. Also renames logger to log in two services. Small extras in the same PR: the save button now reads Save changes, toCsv takes a separator, displayName prefers a nickname, byDate can sort newest first, retry gets an exponential backoff helper with a 250 ms base, and CONTRIBUTING says to run the tests.",
+  "mustRead": [
+    {
+      "path": "db/migrations/0042_drop_legacy_address.sql",
+      "contains": "DROP COLUMN legacy_address"
+    }
+  ],
+  "flags": [
+    {
+      "path": "db/migrations/0042_drop_legacy_address.sql",
+      "contains": "DROP COLUMN legacy_address",
+      "id": "destructive_data"
+    }
+  ]
+}
